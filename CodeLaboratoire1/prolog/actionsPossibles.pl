@@ -1,0 +1,18 @@
+move(B, X, Y) :- clear(B), clear(Y), on(B, X), block(B), block(X), block(Y), B \= X, B \= Y, X \= Y.
+moveToTable(B, X) :- clear(B), on(B, X), block(B), block(X), B \= X.
+
+action(Env, move(B, X, Y)) :-
+    member(clear(B),  Env),
+    member(clear(Y), Env),
+    member(on(B, X), Env),
+    member(block(B), Env),
+    member(block(Y), Env),
+    B \= X, B \= Y, X \= Y.
+action(Env, moveToTable(B, X)) :-
+    member(clear(B), Env),
+    member(on(B, X), Env),
+    member(block(B), Env),
+    member(block(X), Env),
+    B \= X.
+
+actionsPossibles(Env, R) :- findall(Action, action(Env, Action), R).
