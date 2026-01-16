@@ -1,19 +1,46 @@
 from typing import List
 from swiplserver import PrologThread
 
+from prolog_helpers import get_distance_between, get_straight_line_distance, get_successors
 from node import Node
 
 
 class A_Star:
     prolog_thread = None
-    current_node = None
+    current_node: Node = None
     open_set: List[Node] = []
     closed_set = []
+    destination = None
 
-    def __init__(self, prolog_thread: PrologThread, start_node: Node):
+    def __init__(self, prolog_thread: PrologThread, start_node: Node, destination):
         self.prolog_thread = prolog_thread
-        self.current_node = start_node
         self.open_set.append(start_node)
+        self.destination = destination
+
+    def find_path(self):
+        while self.open_set:
+            print(f"open set: {self.open_set}")
+            print(f"closed set: {self.closed_set}")
+            self.current_node = self.find_next_current()
+            print(f"new current node: {self.current_node.current_position}")
+
+            if self.current_node.current_position == self.destination:
+                total_distance = self.current_node.g_score
+                for node in self.closed_set:
+                    total_distance += node.g_score
+
+                print(f"Path found! Total distance was {total_distance} ")
+                return
+
+            self.open_set.remove(self.current_node)
+            self.closed_set.append(self.current_node)
+
+
+            successors = self.current_node.get_successors()
+            for successor in successors:
+                new_node = self.create_node(self.current_node.current_position, successor)
+                self.open_set.append(new_node)
+
 
     def find_next_current(self):
         scores_by_node = {}
@@ -28,10 +55,12 @@ class A_Star:
         next_node = scores_by_node[lowest_score]
         return next_node
 
-    def find_path(self):
-        while (self.current_node.current_position != "bucharest"):
-            self.current_node = self.find_next_current()
-
+    def create_node(self, current_city, city_name):
+        node_successors = get_successors(self.prolog_thread, city_name)
+        node_g_score = get_distance_between(self.prolog_thread, current_city, city_name)
+        node_h_score = get_straight_line_distance(self.prolog_thread, city_name)
+        node = Node(city_name, node_successors, current_city, node_g_score, node_h_score)
+        return node
     
     def __repr__(self):
         return f"""

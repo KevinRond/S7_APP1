@@ -17,7 +17,7 @@ if __name__ == '__main__':
                 arad_h_score = get_straight_line_distance(prolog_thread, "arad")
                 initial_node = Node("arad", arad_successors, None, 0, arad_h_score)
                 
-                a_star = A_Star(prolog_thread, initial_node)
+                a_star = A_Star(prolog_thread, initial_node, "bucharest")
                 a_star.find_path()
 
 
