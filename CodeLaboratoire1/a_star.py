@@ -9,7 +9,7 @@ class A_Star:
     prolog_thread = None
     current_node: Node = None
     open_set: List[Node] = []
-    closed_set = []
+    closed_set: List[Node] = []
     destination = None
 
     def __init__(self, prolog_thread: PrologThread, start_node: Node, destination):
@@ -19,17 +19,13 @@ class A_Star:
 
     def find_path(self):
         while self.open_set:
+            if self.current_node is not None: print(f"current node: {self.current_node.current_position}")
             print(f"open set: {self.open_set}")
             print(f"closed set: {self.closed_set}")
             self.current_node = self.find_next_current()
-            print(f"new current node: {self.current_node.current_position}")
 
             if self.current_node.current_position == self.destination:
-                total_distance = self.current_node.g_score
-                for node in self.closed_set:
-                    total_distance += node.g_score
-
-                print(f"Path found! Total distance was {total_distance} ")
+                print(f"Path found! Total distance was {self.current_node.g_score} ")
                 return
 
             self.open_set.remove(self.current_node)
@@ -47,6 +43,10 @@ class A_Star:
         for node in self.open_set:
             scores_by_node[node.f_score] = node
 
+        # if self.current_node is not None: 
+            # print(f"finding next node when {self.current_node.current_position} is current node")
+            # print(scores_by_node)
+
         lowest_score = 1000
         for score in scores_by_node.keys():
             if score < lowest_score:
@@ -57,9 +57,10 @@ class A_Star:
 
     def create_node(self, current_city, city_name):
         node_successors = get_successors(self.prolog_thread, city_name)
-        node_g_score = get_distance_between(self.prolog_thread, current_city, city_name)
+        node_g_score = get_distance_between(self.prolog_thread, current_city, city_name) + self.current_node.g_score
         node_h_score = get_straight_line_distance(self.prolog_thread, city_name)
         node = Node(city_name, node_successors, current_city, node_g_score, node_h_score)
+        # if (city_name == 'fagaras'): print(f"aaaaaaaaaaah {node}")
         return node
     
     def __repr__(self):
