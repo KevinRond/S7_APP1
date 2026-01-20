@@ -4,16 +4,14 @@ import pygame
 from Player import *
 from Maze import *
 from Constants import *
-from Sys_Expert import Systeme_Expert
 
 
 class App:
     windowWidth = WIDTH
     windowHeight = HEIGHT
     player = 0
-    thread = None
 
-    def __init__(self, mazefile, thread):
+    def __init__(self, mazefile):
         self._running = True
         self._win = False
         self._dead = False
@@ -25,8 +23,6 @@ class App:
         self.timer = 0.0
         self.player = Player()
         self.maze = Maze(mazefile)
-        self.thread = thread
-        self.expert = Systeme_Expert(thread)
 
     def on_init(self):
         pygame.init()
@@ -72,14 +68,12 @@ class App:
             # you need to win all four rounds to beat it
 
         if keys[K_j]:
-            self.expert.setDoor(self.maze.look_at_door(self.player, self._display_surf)[0])
+            print(self.maze.look_at_door(self.player, self._display_surf))
             # returns the state of the doors you can currently see
             # you need to unlock it by providing the correct key
 
         if keys[K_u]:
-            solution = self.expert.getSolution()
-            # print(f"the solution is: {solution}")
-            self.maze.unlock_door(solution)
+            self.maze.unlock_door('first')
             # returns true if the door is unlocked, false if the answer is incorrect and the door remains locked
             # if the door is unlocked you can pass through it (no visible change... yet)
 
