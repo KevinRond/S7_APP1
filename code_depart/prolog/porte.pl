@@ -1,26 +1,9 @@
-removeAt(0, [_|Tail], Tail) :- !.
-removeAt(N, [Head|Tail], [Head|Result]) :-
-    N > 0,
-    N1 is N - 1,
-    removeAt(N1, Tail, Result).
-
-findColor(Color, List, Position) :-
-    findColorAux(Color, List, 0, Position).
-findColorAux(Color, [Color | _], CurrentPos, CurrentPos) :- !.
-findColorAux(Color, [_ | Rest], CurrentPos, FinalPosition) :-
-    NextPos is CurrentPos + 1,
-    findColorAux(Color, Rest, NextPos, FinalPosition).
-
 countColor(_, [], 0) :- !.
 countColor(Color, [Color | Tail], Count) :-
     countColor(Color, Tail, CountTail),
     Count is CountTail + 1, !.
 countColor(Color, [_ | Tail], Count) :-
     countColor(Color, Tail, Count).
-
-lastIndex(List, Index) :-
-    length(List, Len),
-    Index is Len - 1.
 
 findLastColor(Color, List, Index) :-
     findall(I, nth0(I, List, Color), Indices),
