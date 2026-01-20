@@ -19,6 +19,3 @@ if __name__ == '__main__':
                 
                 a_star = A_Star(prolog_thread, initial_node, "bucharest")
                 a_star.find_path()
-
-
-                
