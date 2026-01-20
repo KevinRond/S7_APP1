@@ -2,6 +2,7 @@
 # This code was written for the AI courses in computer engineering at Université de Sherbrooke
 # Author : Audrey Corbeil Therrien
 
+from swiplserver import PrologMQI
 from Games2D import *
 # import ctypes
 
@@ -14,6 +15,9 @@ if __name__ == '__main__':
     # If the window is too big for the screen, uncomment the following line
     # The effect of fixed pixel algorithms has NOT BEEN TESTED. PROCEED WITH CAUTION.
     # ctypes.windll.user32.SetProcessDPIAware()
-    theAPP = App('assets/Mazes/mazeSmall_0')
-    theAPP.on_execute()
+    with PrologMQI() as mqi_file:
+        with mqi_file.create_thread() as prolog_thread:
+            prolog_thread.query("[prolog/porte]")
+            theAPP = App('assets/Mazes/mazeSmall_0', prolog_thread)
+            theAPP.on_execute()
 
