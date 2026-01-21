@@ -5,7 +5,12 @@ from Constants import START, EXIT, COIN, TREASURE, OBSTACLE, MONSTER, DOOR
 
 # Liste des types d'objets que l'on peut cibler avec A*.
 # Tu peux facilement modifier cette constante (ajouter/enlever un type).
-TARGET_TILES = [EXIT]
+TARGET_TILES = [COIN, TREASURE, EXIT]
+
+# Nombre de cibles les plus proches (en distance de Manhattan) pour
+# lesquelles on calcule un vrai chemin A* avant de choisir la meilleure.
+# Modifie simplement cette constante pour tester d'autres valeurs (3, 5, ...).
+NEAREST_TARGETS = 3
 
 
 class A_star:
@@ -55,32 +60,22 @@ class A_star:
         path.reverse()
         return path   # list of (i, j)
 
-    def find_path_from(self, start):
-        """Trouve un chemin A* depuis 'start' jusqu'à l'objet atteignable le plus proche.
+    def _find_path_to_single_goal(self, start, goal):
+        """A* standard vers une unique cible 'goal'.
 
-        start : tuple (ligne, colonne) de la position de départ (par ex. position du joueur).
-        Retourne une liste de cases [(i,j), ...] jusqu'à la cible la plus proche,
-        ou [] s'il n'y a aucun chemin vers une cible.
+        Retourne le chemin sous forme de liste [(i,j), ...] ou [] si aucun
+        chemin n'existe.
         """
-        targets = self.get_target_positions()
-        if not targets:
-            return []
-
-        # Si la position de départ est déjà sur une tuile cible, le chemin est trivial.
-        if start in targets:
-            return [start]
-
-        goals = set(targets)
-
         open_set = []
         heapq.heappush(open_set, (0, start))
         came_from = {}
         g_score = {start: 0}
-        f_score = {start: self.heuristic_to_goals(start, goals)}
+        f_score = {start: self.manhattan(start, goal)}
 
         while open_set:
             _, current = heapq.heappop(open_set)
-            if current in goals:
+
+            if current == goal:
                 return self.reconstruct_path(came_from, current)
 
             for neighbor in self.neighbors(current):
@@ -88,7 +83,55 @@ class A_star:
                 if tentative_g < g_score.get(neighbor, float('inf')):
                     came_from[neighbor] = current
                     g_score[neighbor] = tentative_g
-                    f_score[neighbor] = tentative_g + self.heuristic_to_goals(neighbor, goals)
+                    f_score[neighbor] = tentative_g + self.manhattan(neighbor, goal)
                     heapq.heappush(open_set, (f_score[neighbor], neighbor))
 
-        return []  # aucun chemin vers une cible
+        return []
+
+    def find_path_from(self, start, excluded_targets=None):
+        """Trouve un chemin A* depuis 'start' jusqu'à l'objet atteignable le plus proche.
+
+        start : tuple (ligne, colonne) de la position de départ (par ex. position du joueur).
+        excluded_targets : ensemble ou liste de positions (i, j) à ignorer comme cibles.
+        Retourne une liste de cases [(i,j), ...] jusqu'à la cible la plus proche,
+        ou [] s'il n'y a aucun chemin vers une cible.
+        """
+        targets = self.get_target_positions()
+
+        # Optionnel : retirer certaines cibles (par ex. déjà visitées).
+        if excluded_targets:
+            excluded = set(excluded_targets)
+            targets = [t for t in targets if t not in excluded]
+        if not targets:
+            return []
+
+        # Si la position de départ est déjà sur une tuile cible, le chemin est trivial.
+        if start in targets:
+            return [start]
+
+        # On trie toutes les cibles par distance de Manhattan depuis la case de départ.
+        targets_sorted = sorted(targets, key=lambda t: self.manhattan(start, t))
+
+        # On commence par tester les NEAREST_TARGETS plus proches, comme demandé.
+        primary_candidates = targets_sorted[:NEAREST_TARGETS]
+        secondary_candidates = targets_sorted[NEAREST_TARGETS:]
+
+        best_path = None
+
+        # 1) Essayer les cibles les plus proches en Manhattan.
+        for goal in primary_candidates:
+            path = self._find_path_to_single_goal(start, goal)
+            if path and (best_path is None or len(path) < len(best_path)):
+                best_path = path
+
+        if best_path is not None:
+            return best_path
+
+        # 2) Si aucune des NEAREST_TARGETS n'est atteignable, on tente les autres
+        #    cibles restantes, toujours triées par distance de Manhattan.
+        for goal in secondary_candidates:
+            path = self._find_path_to_single_goal(start, goal)
+            if path and (best_path is None or len(path) < len(best_path)):
+                best_path = path
+
+        return best_path or []  # aucun chemin vers une cible

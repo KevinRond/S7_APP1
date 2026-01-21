@@ -1,6 +1,12 @@
 from A_star import A_star
 
 
+# Test-only option: when enabled, the AI will chain through
+# all reachable targets one by one. Set to False or comment out
+# the related code when you no longer need this behaviour.
+ENABLE_CHAIN_TARGETS = True
+
+
 class PlayerAI:
     """Simple AI controller that uses A* to move the player automatically.
 
@@ -20,6 +26,9 @@ class PlayerAI:
         self.instr_index = 0      # index into path instructions
         self.mode = 'PATH'        # 'PATH' or 'RECENTER'
         self.center_instructions = []  # recenter sequence when in RECENTER mode
+        # Positions (row, col) of targets already visited when chaining
+        # multiple goals (used only if ENABLE_CHAIN_TARGETS is True).
+        self.completed_targets = set()
 
     # ---------------- Pixel <-> tile conversions ----------------
 
@@ -64,10 +73,18 @@ class PlayerAI:
         return instructions
 
     def recompute_path(self):
-        """Recompute a normal A* path from the player's current tile."""
+        """Recompute a normal A* path from the player's current tile.
+
+        If ENABLE_CHAIN_TARGETS is True, already-completed targets are
+        ignored so the player will move on to the next closest one.
+        """
         start_tile = self.player_tile()
         astar = A_star(self.maze.maze)
-        self.path = astar.find_path_from(start_tile)
+
+        if ENABLE_CHAIN_TARGETS and self.completed_targets:
+            self.path = astar.find_path_from(start_tile, excluded_targets=self.completed_targets)
+        else:
+            self.path = astar.find_path_from(start_tile)
         # print("A* start:", start_tile, "path length:", len(self.path))
         self.instructions = self.path_to_instructions(self.path)
         # print("instructions:", self.instructions[:10])  # preview
@@ -139,8 +156,19 @@ class PlayerAI:
                 self.mode = 'PATH'
 
         # Normal path-following mode
+
+        # If we've finished the current instruction list and chaining is
+        # enabled, mark the last target as completed and recompute a new path
+        # to the next closest one (if any).
+        if ENABLE_CHAIN_TARGETS and self.instr_index >= len(self.instructions):
+            if self.path:
+                self.completed_targets.add(self.path[-1])
+            self.recompute_path()
+
         if self.instr_index < len(self.instructions):
             instr = self.instructions[self.instr_index]
             self.instr_index += 1
             return instr
+
+        # No instructions left and no new path found
         return None
