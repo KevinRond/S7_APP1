@@ -4,6 +4,7 @@
 
 from swiplserver import PrologMQI
 from Games2D import *
+import A_star
 # import ctypes
 
 if __name__ == '__main__':
