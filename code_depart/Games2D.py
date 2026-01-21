@@ -5,6 +5,7 @@ from Player import *
 from Maze import *
 from Constants import *
 from Sys_Expert import Systeme_Expert
+from PlayerAI import PlayerAI
 
 
 class App:
@@ -27,6 +28,7 @@ class App:
         self.maze = Maze(mazefile)
         self.thread = thread
         self.expert = Systeme_Expert(thread)
+        self.playerAI = PlayerAI(self.maze, self.player)
 
     def on_init(self):
         pygame.init()
@@ -44,6 +46,8 @@ class App:
         self.player.set_position(self.maze.start[0], self.maze.start[1])
         self.player.set_size(0.9*PLAYER_SIZE*self.maze.tile_size_x, PLAYER_SIZE*self.maze.tile_size_x)
         self._image_surf = pygame.transform.scale(self._image_surf, self.player.get_size())
+        # Now that the player is positioned on the start tile, compute the initial A* path
+        self.playerAI.recompute_path()
 
     def on_keyboard_input(self, keys):
         if keys[K_RIGHT] or keys[K_d]:
@@ -107,21 +111,29 @@ class App:
         self.player.moveRight()
         if self.on_collision():
             self.player.moveLeft()
+            if hasattr(self, 'playerAI') and self.playerAI is not None:
+                self.playerAI.start_recenter()
 
     def move_player_left(self):
         self.player.moveLeft()
         if self.on_collision():
             self.player.moveRight()
+            if hasattr(self, 'playerAI') and self.playerAI is not None:
+                self.playerAI.start_recenter()
 
     def move_player_up(self):
         self.player.moveUp()
         if self.on_collision():
             self.player.moveDown()
+            if hasattr(self, 'playerAI') and self.playerAI is not None:
+                self.playerAI.start_recenter()
 
     def move_player_down(self):
         self.player.moveDown()
         if self.on_collision():
             self.player.moveUp()
+            if hasattr(self, 'playerAI') and self.playerAI is not None:
+                self.playerAI.start_recenter()
 
     def on_wall_collision(self):
         collide_index = self.player.get_rect().collidelist(self.maze.wallList)
@@ -217,17 +229,24 @@ class App:
                     self.timer += 0.01
             pygame.event.pump()
             keys = pygame.key.get_pressed()
-            self.on_keyboard_input(keys)
-            # self.on_AI_input(instruction)
+            #self.on_keyboard_input(keys)
+            instruction = self.playerAI.get_next_instruction()
+            if instruction is not None:
+                self.on_AI_input(instruction)
             if self.on_coin_collision():
                 self.score += 1
+                self.playerAI.recompute_path()
+
             if self.on_treasure_collision():
                 self.score += 10
+                self.playerAI.recompute_path()
+
             monster = self.on_monster_collision()
             if monster:
                 if monster.fight(self.player):
                     self.maze.monsterList.remove(monster)
                     self.score += 100
+                    self.playerAI.recompute_path()
                 else:
                     self._running = False
                     self._dead = True
