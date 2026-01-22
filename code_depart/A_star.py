@@ -26,7 +26,7 @@ class A_star:
         # On bloque seulement les murs et les obstacles.
         # Les monstres, pièces, trésors, portes et la sortie restent atteignables
         # (les portes sont traitées comme "ouvertes" pour l'algorithme de cheminement).
-        return cell not in ('1', OBSTACLE)
+        return cell not in ('1')
 
     def manhattan(self, a, b):
         # Distance de Manhattan entre deux cases (ligne,colonne)

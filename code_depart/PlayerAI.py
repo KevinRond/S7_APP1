@@ -6,6 +6,15 @@ from A_star import A_star
 # the related code when you no longer need this behaviour.
 ENABLE_CHAIN_TARGETS = True
 
+# HOMING mode: fine-tuned navigation to collect items
+HOMING_ACTIVATION_DISTANCE = 60  # pixels - distance pour activer HOMING
+PRECISION_THRESHOLD = 8  # pixels - précision finale pour considérer qu'on est arrivé
+
+# Fuzzy logic for obstacle avoidance
+OBSTACLE_DANGER_RADIUS = 40  # pixels - rayon de danger autour des obstacles
+OBSTACLE_CRITICAL_RADIUS = 20  # pixels - rayon critique (très dangereux)
+SPEED_REDUCTION_FACTOR = 0.6  # facteur de réduction de vitesse près des obstacles
+
 
 class PlayerAI:
     """Simple AI controller that uses A* to move the player automatically.
@@ -24,11 +33,13 @@ class PlayerAI:
         self.path = []            # list of (row, col)
         self.instructions = []    # list of 'UP'/'DOWN'/'LEFT'/'RIGHT'
         self.instr_index = 0      # index into path instructions
-        self.mode = 'PATH'        # 'PATH' or 'RECENTER'
+        self.mode = 'PATH'        # 'PATH', 'RECENTER', or 'HOMING'
         self.center_instructions = []  # recenter sequence when in RECENTER mode
         # Positions (row, col) of targets already visited when chaining
         # multiple goals (used only if ENABLE_CHAIN_TARGETS is True).
         self.completed_targets = set()
+        self.original_speed = player.speed  # Sauvegarder la vitesse originale
+        self.current_target = None  # L'item ciblé en mode HOMING
 
     # ---------------- Pixel <-> tile conversions ----------------
 
@@ -37,6 +48,31 @@ class PlayerAI:
         row = int(self.player.y / self.maze.tile_size_y)
         col = int(self.player.x / self.maze.tile_size_x)
         return row, col
+
+    # ---------------- Item detection ----------------
+
+    def get_nearest_item_in_perception(self):
+        """Trouve l'item (coin ou treasure) le plus proche dans le rayon de perception.
+        
+        Retourne le pygame.Rect de l'item le plus proche, ou None.
+        """
+        perception = self.maze.make_perception_list(self.player, None)
+        item_list = perception[2]  # coins + treasures
+        
+        if not item_list:
+            return None
+        
+        player_cx = self.player.x + self.player.size_x / 2
+        player_cy = self.player.y + self.player.size_y / 2
+        
+        # Trouver l'item le plus proche (distance euclidienne)
+        def distance_to_item(item):
+            dx = item.centerx - player_cx
+            dy = item.centery - player_cy
+            return (dx**2 + dy**2)**0.5
+        
+        nearest = min(item_list, key=distance_to_item)
+        return nearest
 
     # ---------------- Path and instructions ----------------
 
@@ -139,6 +175,146 @@ class PlayerAI:
         self.center_instructions = instructions
         self.mode = 'RECENTER'
 
+    # ---------------- Fuzzy logic for obstacle avoidance ----------------
+
+    def compute_obstacle_danger(self, intended_direction):
+        """Calcule le niveau de danger des obstacles avec logique floue.
+        
+        Args:
+            intended_direction: 'UP', 'DOWN', 'LEFT', 'RIGHT' - direction voulue
+        
+        Returns:
+            dict avec:
+            - 'danger_score': float 0-1 (0=safe, 1=très dangereux)
+            - 'suggested_direction': direction alternative ou None
+            - 'speed_multiplier': float (0.6-1.0) pour ajuster la vitesse
+        """
+        perception = self.maze.make_perception_list(self.player, None)
+        obstacle_list = perception[1]  # Liste des obstacles
+        
+        if not obstacle_list:
+            return {'danger_score': 0.0, 'suggested_direction': None, 'speed_multiplier': 1.0}
+        
+        player_cx = self.player.x + self.player.size_x / 2
+        player_cy = self.player.y + self.player.size_y / 2
+        
+        # Calculer le vecteur de mouvement prévu
+        move_vector = {
+            'UP': (0, -1),
+            'DOWN': (0, 1),
+            'LEFT': (-1, 0),
+            'RIGHT': (1, 0)
+        }.get(intended_direction, (0, 0))
+        
+        max_danger = 0.0
+        dangerous_obstacles = []
+        
+        for obstacle in obstacle_list:
+            dx = obstacle.centerx - player_cx
+            dy = obstacle.centery - player_cy
+            distance = (dx**2 + dy**2)**0.5
+            
+            # Fonction d'appartenance floue pour la distance
+            if distance < OBSTACLE_CRITICAL_RADIUS:
+                distance_danger = 1.0  # Critique!
+            elif distance < OBSTACLE_DANGER_RADIUS:
+                # Décroissance linéaire de 1.0 à 0.0
+                distance_danger = 1.0 - (distance - OBSTACLE_CRITICAL_RADIUS) / \
+                                  (OBSTACLE_DANGER_RADIUS - OBSTACLE_CRITICAL_RADIUS)
+            else:
+                distance_danger = 0.0  # Safe
+            
+            # Calculer si l'obstacle est dans la direction du mouvement
+            # Produit scalaire normalisé
+            if distance > 0:
+                obstacle_direction = (dx / distance, dy / distance)
+                alignment = obstacle_direction[0] * move_vector[0] + \
+                           obstacle_direction[1] * move_vector[1]
+                # alignment: 1.0 = même direction, -1.0 = direction opposée, 0 = perpendiculaire
+                
+                # Si on va VERS l'obstacle, c'est plus dangereux
+                if alignment > 0.3:  # Dans notre direction (30° de tolérance)
+                    direction_danger = alignment  # 0.3 à 1.0
+                else:
+                    direction_danger = 0.0
+            else:
+                direction_danger = 1.0  # On est déjà sur l'obstacle!
+            
+            # Danger combiné (logique floue: AND = min, OR = max)
+            # Ici on utilise le produit pour combiner distance et direction
+            combined_danger = distance_danger * (0.5 + 0.5 * direction_danger)
+            
+            if combined_danger > 0.1:  # Seuil de significativité
+                dangerous_obstacles.append({
+                    'obstacle': obstacle,
+                    'distance': distance,
+                    'danger': combined_danger,
+                    'dx': dx,
+                    'dy': dy
+                })
+            
+            max_danger = max(max_danger, combined_danger)
+        
+        # Déterminer une direction alternative si nécessaire
+        suggested_direction = None
+        if max_danger > 0.4 and dangerous_obstacles:  # Seuil de danger significatif
+            # Trouver une direction perpendiculaire pour contourner
+            avg_dx = sum(obs['dx'] for obs in dangerous_obstacles) / len(dangerous_obstacles)
+            avg_dy = sum(obs['dy'] for obs in dangerous_obstacles) / len(dangerous_obstacles)
+            
+            # Logique de contournement
+            if intended_direction in ['UP', 'DOWN']:
+                # Mouvement vertical, contourner horizontalement
+                if abs(avg_dx) > 5:  # Obstacle à gauche ou droite
+                    suggested_direction = 'LEFT' if avg_dx > 0 else 'RIGHT'
+            else:  # LEFT ou RIGHT
+                # Mouvement horizontal, contourner verticalement
+                if abs(avg_dy) > 5:  # Obstacle en haut ou en bas
+                    suggested_direction = 'UP' if avg_dy > 0 else 'DOWN'
+        
+        # Ajustement de vitesse basé sur le danger
+        if max_danger > 0.6:
+            speed_multiplier = SPEED_REDUCTION_FACTOR  # Ralentir beaucoup
+        elif max_danger > 0.3:
+            speed_multiplier = 0.8  # Ralentir un peu
+        else:
+            speed_multiplier = 1.0  # Vitesse normale
+        
+        return {
+            'danger_score': max_danger,
+            'suggested_direction': suggested_direction,
+            'speed_multiplier': speed_multiplier
+        }
+
+    def apply_speed_adjustment(self, speed_multiplier):
+        """Ajuste la vitesse du joueur selon le multiplicateur."""
+        self.player.speed = int(self.original_speed * speed_multiplier)
+        # Minimum 1 pour éviter que le joueur ne bouge plus
+        if self.player.speed < 1:
+            self.player.speed = 1
+
+    # ---------------- HOMING mode: precise navigation to items ----------------
+
+    def compute_direction_to_target(self, target_rect):
+        """Calcule la direction simple vers un item (sans logique floue).
+        
+        Returns:
+            Direction ('UP', 'DOWN', 'LEFT', 'RIGHT') ou None si arrivé.
+        """
+        player_cx = self.player.x + self.player.size_x / 2
+        player_cy = self.player.y + self.player.size_y / 2
+        
+        dx = target_rect.centerx - player_cx
+        dy = target_rect.centery - player_cy
+        
+        # Prioriser le mouvement le plus important (Manhattan)
+        if abs(dx) > PRECISION_THRESHOLD and abs(dx) >= abs(dy):
+            return 'RIGHT' if dx > 0 else 'LEFT'
+        elif abs(dy) > PRECISION_THRESHOLD:
+            return 'DOWN' if dy > 0 else 'UP'
+        else:
+            return None  # Arrivé à destination
+
     def get_next_instruction(self):
         """Return the next direction for the player, or None if nothing to do."""
 
@@ -155,7 +331,56 @@ class PlayerAI:
                 # No more recenter instructions
                 self.mode = 'PATH'
 
-        # Normal path-following mode
+        # HOMING mode: precise navigation to nearby items with obstacle avoidance
+        if self.mode == 'HOMING':
+            # Vérifier si l'item cible existe encore
+            target = self.get_nearest_item_in_perception()
+            
+            if target is None:
+                # Plus d'item visible, retour au mode PATH
+                self.mode = 'PATH'
+                self.current_target = None
+                self.apply_speed_adjustment(1.0)  # Restaurer vitesse normale
+                return self.get_next_instruction()
+            
+            # Calculer la direction vers l'item
+            intended_direction = self.compute_direction_to_target(target)
+            
+            if intended_direction is None:
+                # Arrivé à l'item, retour au mode PATH
+                self.mode = 'PATH'
+                self.current_target = None
+                self.apply_speed_adjustment(1.0)
+                return self.get_next_instruction()
+            
+            # *** LOGIQUE FLOUE: Évaluer les obstacles ***
+            obstacle_info = self.compute_obstacle_danger(intended_direction)
+            
+            # Ajuster la vitesse selon le danger
+            self.apply_speed_adjustment(obstacle_info['speed_multiplier'])
+            
+            # Si danger élevé et direction alternative suggérée, l'utiliser
+            if obstacle_info['danger_score'] > 0.5 and obstacle_info['suggested_direction']:
+                return obstacle_info['suggested_direction']
+            else:
+                return intended_direction
+
+        # Normal path-following mode (PATH)
+
+        # Vérifier si un item est proche pour passer en mode HOMING
+        nearest_item = self.get_nearest_item_in_perception()
+        if nearest_item:
+            player_cx = self.player.x + self.player.size_x / 2
+            player_cy = self.player.y + self.player.size_y / 2
+            dx = nearest_item.centerx - player_cx
+            dy = nearest_item.centery - player_cy
+            distance = (dx**2 + dy**2)**0.5
+            
+            # Activer HOMING si assez proche
+            if distance < HOMING_ACTIVATION_DISTANCE:
+                self.mode = 'HOMING'
+                self.current_target = nearest_item
+                return self.get_next_instruction()
 
         # If we've finished the current instruction list and chaining is
         # enabled, mark the last target as completed and recompute a new path
@@ -168,6 +393,15 @@ class PlayerAI:
         if self.instr_index < len(self.instructions):
             instr = self.instructions[self.instr_index]
             self.instr_index += 1
+            
+            # *** LOGIQUE FLOUE: Vérifier les obstacles même en mode PATH ***
+            obstacle_info = self.compute_obstacle_danger(instr)
+            self.apply_speed_adjustment(obstacle_info['speed_multiplier'])
+            
+            # Si danger critique, utiliser direction alternative
+            if obstacle_info['danger_score'] > 0.7 and obstacle_info['suggested_direction']:
+                return obstacle_info['suggested_direction']
+            
             return instr
 
         # No instructions left and no new path found
