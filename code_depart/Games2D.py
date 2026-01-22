@@ -174,6 +174,8 @@ class App:
     def on_door_collision(self):
         for door in self.maze.doorList:
             if self.player.get_rect().colliderect(door.rect):
+                self.expert.setDoor(self.maze.look_at_door(self.player, self._display_surf)[0])
+                self.maze.unlock_door(self.expert.getSolution())
                 return True
         return False
 
