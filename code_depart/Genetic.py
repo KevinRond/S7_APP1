@@ -289,15 +289,20 @@ class Genetic:
         self.population[flip_mask] = 1 - self.population[flip_mask]
 
     def new_gen(self):
-        # Perform a the pair selection, crossover and mutation and
-        # generate a new population for the next generation.
-        # Input:
-        # - POPULATION, the binary matrix representing the population. Each row is an individual.
-        # Output:
-        # - POPULATION, the new population.
+        # Remember the current best individuals before we replace the population
+        elite_count = 3
+        if self.current_gen > 0 and elite_count > 0:
+            elite_idx = np.argsort(self.fitness)[-elite_count:]
+            elites = self.population[elite_idx].copy()
+
         pairs = self.doSelection()
         self.population = self.doCrossover(pairs)
         self.doMutation()
+
+        # Insert elites back (replace last individuals)
+        if self.current_gen > 0 and elite_count > 0:
+            self.population[-elite_count:] = elites
+
         self.current_gen += 1
 
 
