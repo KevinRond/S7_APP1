@@ -6,6 +6,7 @@ from Maze import *
 from Constants import *
 from Sys_Expert import Systeme_Expert
 from PlayerAI import PlayerAI
+from Genetic import Genetic
 
 
 class App:
@@ -245,13 +246,34 @@ class App:
 
             monster = self.on_monster_collision()
             if monster:
-                if monster.fight(self.player):
-                    self.maze.monsterList.remove(monster)
-                    self.score += 100
-                    self.playerAI.recompute_path()
-                else:
-                    self._running = False
-                    self._dead = True
+                numparams = len(self.player.get_attributes())
+                popsize = 500
+                nbits = 24
+                ga_sim = Genetic(numparams, popsize, nbits, self.player)
+                ga_sim.init_pop()
+                ga_sim.set_fit_fun(monster.mock_fight)
+                numGenerations = 100
+                mutationProb = 0.02
+                crossoverProb = 0.8
+                ga_sim.set_sim_parameters(numGenerations, mutationProb, crossoverProb)
+                for i in range(ga_sim.num_generations):
+
+                    ga_sim.decode_individuals()
+                    ga_sim.eval_fit()
+                    ga_sim.print_progress()
+                    ga_sim.new_gen()
+
+                new_attr = ga_sim.get_best_individual()
+                self.player.set_attributes(new_attr)
+                print(monster.mock_fight(self.player))
+                
+                # if monster.fight(self.player):
+                #     self.maze.monsterList.remove(monster)
+                #     self.score += 100
+                #     self.playerAI.recompute_path()
+                # else:
+                #     self._running = False
+                #     self._dead = True
             if self.on_exit():
                 self._running = False
                 self._win = True
