@@ -1,4 +1,5 @@
 from A_star import A_star
+from FuzzyObstacleController import FuzzyObstacleController
 
 
 # Test-only option: when enabled, the AI will chain through
@@ -40,6 +41,9 @@ class PlayerAI:
         self.completed_targets = set()
         self.original_speed = player.speed  # Sauvegarder la vitesse originale
         self.current_target = None  # L'item ciblé en mode HOMING
+        
+        # Fuzzy controller for obstacle avoidance
+        self.fuzzy_controller = FuzzyObstacleController()
 
     # ---------------- Pixel <-> tile conversions ----------------
 
@@ -178,7 +182,7 @@ class PlayerAI:
     # ---------------- Fuzzy logic for obstacle avoidance ----------------
 
     def compute_obstacle_danger(self, intended_direction):
-        """Calcule le niveau de danger des obstacles avec logique floue.
+        """Calcule le niveau de danger des obstacles avec logique floue scikit-fuzzy.
         
         Args:
             intended_direction: 'UP', 'DOWN', 'LEFT', 'RIGHT' - direction voulue
@@ -187,7 +191,7 @@ class PlayerAI:
             dict avec:
             - 'danger_score': float 0-1 (0=safe, 1=très dangereux)
             - 'suggested_direction': direction alternative ou None
-            - 'speed_multiplier': float (0.6-1.0) pour ajuster la vitesse
+            - 'speed_multiplier': float (0.5-1.0) pour ajuster la vitesse
         """
         perception = self.maze.make_perception_list(self.player, None)
         obstacle_list = perception[1]  # Liste des obstacles
@@ -207,6 +211,7 @@ class PlayerAI:
         }.get(intended_direction, (0, 0))
         
         max_danger = 0.0
+        max_speed_mult = 1.0
         dangerous_obstacles = []
         
         for obstacle in obstacle_list:
@@ -214,53 +219,47 @@ class PlayerAI:
             dy = obstacle.centery - player_cy
             distance = (dx**2 + dy**2)**0.5
             
-            # Fonction d'appartenance floue pour la distance
-            if distance < OBSTACLE_CRITICAL_RADIUS:
-                distance_danger = 1.0  # Critique!
-            elif distance < OBSTACLE_DANGER_RADIUS:
-                # Décroissance linéaire de 1.0 à 0.0
-                distance_danger = 1.0 - (distance - OBSTACLE_CRITICAL_RADIUS) / \
-                                  (OBSTACLE_DANGER_RADIUS - OBSTACLE_CRITICAL_RADIUS)
-            else:
-                distance_danger = 0.0  # Safe
-            
-            # Calculer si l'obstacle est dans la direction du mouvement
-            # Produit scalaire normalisé
+            # Calculer l'alignement avec la direction de mouvement
+            # Produit scalaire normalisé: -1 (opposé) à 1 (aligné)
             if distance > 0:
                 obstacle_direction = (dx / distance, dy / distance)
                 alignment = obstacle_direction[0] * move_vector[0] + \
                            obstacle_direction[1] * move_vector[1]
-                # alignment: 1.0 = même direction, -1.0 = direction opposée, 0 = perpendiculaire
-                
-                # Si on va VERS l'obstacle, c'est plus dangereux
-                if alignment > 0.3:  # Dans notre direction (30° de tolérance)
-                    direction_danger = alignment  # 0.3 à 1.0
-                else:
-                    direction_danger = 0.0
             else:
-                direction_danger = 1.0  # On est déjà sur l'obstacle!
+                alignment = 1.0  # On est sur l'obstacle!
             
-            # Danger combiné (logique floue: AND = min, OR = max)
-            # Ici on utilise le produit pour combiner distance et direction
-            combined_danger = distance_danger * (0.5 + 0.5 * direction_danger)
+            # *** UTILISER LE CONTRÔLEUR FUZZY ***
+            fuzzy_result = self.fuzzy_controller.compute(
+                min(distance, 100),  # Clamp à 100px max
+                alignment            # -1 à 1
+            )
             
-            if combined_danger > 0.1:  # Seuil de significativité
+            danger = fuzzy_result['danger_score']
+            speed = fuzzy_result['speed_multiplier']
+            
+            if danger > 0.1:  # Seuil de significativité
                 dangerous_obstacles.append({
                     'obstacle': obstacle,
                     'distance': distance,
-                    'danger': combined_danger,
+                    'danger': danger,
                     'dx': dx,
-                    'dy': dy
+                    'dy': dy,
+                    'alignment': alignment
                 })
             
-            max_danger = max(max_danger, combined_danger)
+            # Garder le pire danger
+            if danger > max_danger:
+                max_danger = danger
+                max_speed_mult = speed
         
         # Déterminer une direction alternative si nécessaire
         suggested_direction = None
-        if max_danger > 0.4 and dangerous_obstacles:  # Seuil de danger significatif
+        if max_danger > 0.5 and dangerous_obstacles:  # Seuil de danger significatif
             # Trouver une direction perpendiculaire pour contourner
-            avg_dx = sum(obs['dx'] for obs in dangerous_obstacles) / len(dangerous_obstacles)
-            avg_dy = sum(obs['dy'] for obs in dangerous_obstacles) / len(dangerous_obstacles)
+            # Moyenne pondérée par le danger
+            total_weight = sum(obs['danger'] for obs in dangerous_obstacles)
+            avg_dx = sum(obs['dx'] * obs['danger'] for obs in dangerous_obstacles) / total_weight
+            avg_dy = sum(obs['dy'] * obs['danger'] for obs in dangerous_obstacles) / total_weight
             
             # Logique de contournement
             if intended_direction in ['UP', 'DOWN']:
@@ -272,18 +271,10 @@ class PlayerAI:
                 if abs(avg_dy) > 5:  # Obstacle en haut ou en bas
                     suggested_direction = 'UP' if avg_dy > 0 else 'DOWN'
         
-        # Ajustement de vitesse basé sur le danger
-        if max_danger > 0.6:
-            speed_multiplier = SPEED_REDUCTION_FACTOR  # Ralentir beaucoup
-        elif max_danger > 0.3:
-            speed_multiplier = 0.8  # Ralentir un peu
-        else:
-            speed_multiplier = 1.0  # Vitesse normale
-        
         return {
             'danger_score': max_danger,
             'suggested_direction': suggested_direction,
-            'speed_multiplier': speed_multiplier
+            'speed_multiplier': max_speed_mult
         }
 
     def apply_speed_adjustment(self, speed_multiplier):

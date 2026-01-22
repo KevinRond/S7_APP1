@@ -110,30 +110,31 @@ class App:
     def move_player_right(self):
         self.player.moveRight()
         if self.on_collision():
-            self.player.moveLeft()
-            if hasattr(self, 'playerAI') and self.playerAI is not None:
-                self.playerAI.start_recenter()
+                if hasattr(self, 'playerAI') and self.playerAI is not None and self.on_wall_collision():
+                    self.playerAI.start_recenter()
+                self.player.moveLeft()
 
     def move_player_left(self):
         self.player.moveLeft()
         if self.on_collision():
-            self.player.moveRight()
-            if hasattr(self, 'playerAI') and self.playerAI is not None:
-                self.playerAI.start_recenter()
+                self.player.moveRight()
+                if hasattr(self, 'playerAI') and self.playerAI is not None and self.on_wall_collision():
+                    self.playerAI.start_recenter()
+                self.player.moveRight()
 
     def move_player_up(self):
         self.player.moveUp()
         if self.on_collision():
-            self.player.moveDown()
-            if hasattr(self, 'playerAI') and self.playerAI is not None:
-                self.playerAI.start_recenter()
+                if hasattr(self, 'playerAI') and self.playerAI is not None and self.on_wall_collision():
+                    self.playerAI.start_recenter()
+                self.player.moveDown()
 
     def move_player_down(self):
         self.player.moveDown()
         if self.on_collision():
-            self.player.moveUp()
-            if hasattr(self, 'playerAI') and self.playerAI is not None:
-                self.playerAI.start_recenter()
+                if hasattr(self, 'playerAI') and self.playerAI is not None and self.on_wall_collision():
+                    self.playerAI.start_recenter()
+                self.player.moveUp()
 
     def on_wall_collision(self):
         collide_index = self.player.get_rect().collidelist(self.maze.wallList)
@@ -194,6 +195,32 @@ class App:
     def on_render(self):
         self.maze_render()
         self._display_surf.blit(self._image_surf, (self.player.x, self.player.y))
+        
+        # ========== HITBOX VISUALIZATION ==========
+        # Draw player hitbox (GREEN)
+        pygame.draw.rect(self._display_surf, GREEN, self.player.get_rect(), 2)
+        
+        # Draw obstacle hitboxes (RED)
+        for obstacle in self.maze.obstacleList:
+            pygame.draw.rect(self._display_surf, RED, obstacle, 2)
+        
+        # Draw coin hitboxes (YELLOW)
+        for coin in self.maze.coinList:
+            pygame.draw.rect(self._display_surf, (255, 255, 0), coin, 1)
+        
+        # Draw treasure hitboxes (ORANGE)
+        for treasure in self.maze.treasureList:
+            pygame.draw.rect(self._display_surf, (255, 165, 0), treasure, 2)
+        
+        # Optional: Draw perception radius (BLUE - semi-transparent)
+        # Uncomment to see perception area
+        # perception_distance = PERCEPTION_RADIUS * max(self.maze.tile_size_x, self.maze.tile_size_y)
+        # perception_left = self.player.x + 0.5 * (self.player.size_x - perception_distance)
+        # perception_top = self.player.y + 0.5 * (self.player.size_y - perception_distance)
+        # perception_rect = pygame.Rect(perception_left, perception_top, perception_distance, perception_distance)
+        # pygame.draw.rect(self._display_surf, BLUE, perception_rect, 1)
+        # ==========================================
+        
         pygame.display.flip()
 
     def on_win_render(self):
