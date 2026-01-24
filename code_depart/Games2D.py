@@ -110,30 +110,41 @@ class App:
     def move_player_right(self):
         self.player.moveRight()
         if self.on_collision():
-                if hasattr(self, 'playerAI') and self.playerAI is not None and self.on_wall_collision():
-                    self.playerAI.start_recenter()
+                if hasattr(self, 'playerAI') and self.playerAI is not None:
+                    if self.on_wall_collision():
+                        self.playerAI.start_recenter()
+                    elif self.on_obstacle_collision() and self.playerAI.is_obstacle_blocking_player('RIGHT'):
+                        self.playerAI.activate_squeeze_mode('RIGHT')
                 self.player.moveLeft()
 
     def move_player_left(self):
         self.player.moveLeft()
         if self.on_collision():
-                self.player.moveRight()
-                if hasattr(self, 'playerAI') and self.playerAI is not None and self.on_wall_collision():
-                    self.playerAI.start_recenter()
+                if hasattr(self, 'playerAI') and self.playerAI is not None:
+                    if self.on_wall_collision():
+                        self.playerAI.start_recenter()
+                    elif self.on_obstacle_collision() and self.playerAI.is_obstacle_blocking_player('LEFT'):
+                        self.playerAI.activate_squeeze_mode('LEFT')
                 self.player.moveRight()
 
     def move_player_up(self):
         self.player.moveUp()
         if self.on_collision():
-                if hasattr(self, 'playerAI') and self.playerAI is not None and self.on_wall_collision():
-                    self.playerAI.start_recenter()
+                if hasattr(self, 'playerAI') and self.playerAI is not None:
+                    if self.on_wall_collision():
+                        self.playerAI.start_recenter()
+                    elif self.on_obstacle_collision() and self.playerAI.is_obstacle_blocking_player('UP'):
+                        self.playerAI.activate_squeeze_mode('UP')
                 self.player.moveDown()
 
     def move_player_down(self):
         self.player.moveDown()
         if self.on_collision():
-                if hasattr(self, 'playerAI') and self.playerAI is not None and self.on_wall_collision():
-                    self.playerAI.start_recenter()
+                if hasattr(self, 'playerAI') and self.playerAI is not None:
+                    if self.on_wall_collision():
+                        self.playerAI.start_recenter()
+                    elif self.on_obstacle_collision() and self.playerAI.is_obstacle_blocking_player('DOWN'):
+                        self.playerAI.activate_squeeze_mode('DOWN')
                 self.player.moveUp()
 
     def on_wall_collision(self):

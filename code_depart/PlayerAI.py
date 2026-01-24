@@ -17,6 +17,7 @@ OBSTACLE_CRITICAL_RADIUS = 20  # pixels - rayon critique (très dangereux)
 SPEED_REDUCTION_FACTOR = 0.6  # facteur de réduction de vitesse près des obstacles
 
 
+
 class PlayerAI:
     """Simple AI controller that uses A* to move the player automatically.
 
@@ -34,7 +35,7 @@ class PlayerAI:
         self.path = []            # list of (row, col)
         self.instructions = []    # list of 'UP'/'DOWN'/'LEFT'/'RIGHT'
         self.instr_index = 0      # index into path instructions
-        self.mode = 'PATH'        # 'PATH', 'RECENTER', or 'HOMING'
+        self.mode = 'PATH'        # 'PATH', 'RECENTER', 'HOMING', or 'SQUEEZE'
         self.center_instructions = []  # recenter sequence when in RECENTER mode
         # Positions (row, col) of targets already visited when chaining
         # multiple goals (used only if ENABLE_CHAIN_TARGETS is True).
@@ -44,6 +45,11 @@ class PlayerAI:
         
         # Fuzzy controller for obstacle avoidance
         self.fuzzy_controller = FuzzyObstacleController()
+        
+        # Squeeze mode state
+        self.squeeze_instructions = []
+        self.intended_direction = None
+        self.blocking_obstacle = None
 
     # ---------------- Pixel <-> tile conversions ----------------
 
@@ -284,6 +290,230 @@ class PlayerAI:
         if self.player.speed < 1:
             self.player.speed = 1
 
+    # ---------------- Squeeze mode: navigation when stuck ----------------
+
+    def is_obstacle_blocking_player(self, direction):
+        """Vérifie si un obstacle bloque le joueur dans une direction donnée.
+        
+        Args:
+            direction: 'UP', 'DOWN', 'LEFT', 'RIGHT' - direction où le joueur veut aller
+        
+        Returns:
+            True si un obstacle bloque cette direction, False sinon
+        """
+        perception = self.maze.make_perception_list(self.player, None)
+        obstacle_list = perception[1]
+        
+        if not obstacle_list:
+            return False
+        
+        # Trouver les obstacles bloquants dans cette direction
+        blocking_obstacles = [obs for obs in obstacle_list 
+                            if self.is_obstacle_blocking_path(obs, direction)]
+        
+        return len(blocking_obstacles) > 0
+
+    def is_obstacle_blocking_path(self, obstacle, intended_direction):
+        """Vérifie si un obstacle bloque le chemin prévu en utilisant les hitboxes exactes."""
+        # Demi-largeurs pour la détection de collision
+        player_half_width = self.player.size_x / 2
+        player_half_height = self.player.size_y / 2
+        obstacle_half_width = obstacle.width / 2
+        obstacle_half_height = obstacle.height / 2
+        
+        player_cx = self.player.x + player_half_width
+        player_cy = self.player.y + player_half_height
+        
+        dx = obstacle.centerx - player_cx
+        dy = obstacle.centery - player_cy
+        
+        # Collision corridor = somme des demi-largeurs/hauteurs
+        horizontal_corridor = player_half_width + obstacle_half_width
+        vertical_corridor = player_half_height + obstacle_half_height
+        
+        # Vérifier si l'obstacle est devant dans la direction voulue ET dans le corridor de collision
+        if intended_direction == 'UP' and dy < 0 and abs(dx) < horizontal_corridor:
+            return True
+        elif intended_direction == 'DOWN' and dy > 0 and abs(dx) < horizontal_corridor:
+            return True
+        elif intended_direction == 'LEFT' and dx < 0 and abs(dy) < vertical_corridor:
+            return True
+        elif intended_direction == 'RIGHT' and dx > 0 and abs(dy) < vertical_corridor:
+            return True
+        
+        return False
+
+    def measure_gap(self, obstacle, wall_list, direction):
+        """Mesure l'espace entre l'obstacle et le mur le plus proche dans une direction."""
+        if direction == 'LEFT':
+            obstacle_edge = obstacle.left
+            walls_to_left = [w for w in wall_list if w.right <= obstacle_edge and 
+                           abs(w.centery - obstacle.centery) < self.maze.tile_size_y * 2]
+            if walls_to_left:
+                nearest_wall = max(walls_to_left, key=lambda w: w.right)
+                return obstacle_edge - nearest_wall.right
+            return 999  # Pas de mur = grand espace
+        
+        elif direction == 'RIGHT':
+            obstacle_edge = obstacle.right
+            walls_to_right = [w for w in wall_list if w.left >= obstacle_edge and 
+                            abs(w.centery - obstacle.centery) < self.maze.tile_size_y * 2]
+            if walls_to_right:
+                nearest_wall = min(walls_to_right, key=lambda w: w.left)
+                return nearest_wall.left - obstacle_edge
+            return 999
+        
+        elif direction == 'UP':
+            obstacle_edge = obstacle.top
+            walls_above = [w for w in wall_list if w.bottom <= obstacle_edge and 
+                         abs(w.centerx - obstacle.centerx) < self.maze.tile_size_x * 2]
+            if walls_above:
+                nearest_wall = max(walls_above, key=lambda w: w.bottom)
+                return obstacle_edge - nearest_wall.bottom
+            return 999
+        
+        elif direction == 'DOWN':
+            obstacle_edge = obstacle.bottom
+            walls_below = [w for w in wall_list if w.top >= obstacle_edge and 
+                         abs(w.centerx - obstacle.centerx) < self.maze.tile_size_x * 2]
+            if walls_below:
+                nearest_wall = min(walls_below, key=lambda w: w.top)
+                return nearest_wall.top - obstacle_edge
+            return 999
+        
+        return 0
+
+    def create_squeeze_instructions(self, obstacle, squeeze_direction, forward_direction):
+        """Crée une séquence de mouvements pour se décaler et dégager l'obstacle.
+        
+        Déplace le joueur latéralement juste assez pour que l'obstacle ne bloque plus
+        le chemin dans la direction voulue. Ensuite les instructions normales reprennent.
+        """
+        instructions = []
+        player_cx = self.player.x + self.player.size_x / 2
+        player_cy = self.player.y + self.player.size_y / 2
+        
+        # Petite marge de sécurité
+
+        
+        if squeeze_direction in ['LEFT', 'RIGHT']:
+            # Bouger latéralement jusqu'à ce que l'obstacle ne soit plus dans le corridor vertical
+            # Distance = distance au centre de l'obstacle + sa demi-largeur + demi-largeur joueur + marge
+            clearance_needed = abs(obstacle.centerx - player_cx) + obstacle.width/2 + self.player.size_x/2
+            steps = max(1, int(clearance_needed / self.player.speed))
+            
+            for _ in range(steps):
+                instructions.append(squeeze_direction)
+        
+        else:  # UP or DOWN
+            # Bouger latéralement jusqu'à ce que l'obstacle ne soit plus dans le corridor horizontal
+            clearance_needed = abs(obstacle.centery - player_cy) + obstacle.height/2 + self.player.size_y/2
+            steps = max(1, int(clearance_needed / self.player.speed))
+            
+            for _ in range(steps):
+                instructions.append(squeeze_direction)
+        
+        return instructions
+
+    def find_squeeze_path(self, intended_direction):
+        """Trouve le meilleur passage pour contourner un obstacle bloquant."""
+        perception = self.maze.make_perception_list(self.player, None)
+        obstacle_list = perception[1]
+        wall_list = perception[0]
+        
+        if not obstacle_list:
+            return []
+        #TODO: tu peux srm juste prendre l onstacle le plus proche
+        # Trouver l'obstacle bloquant
+        blocking_obstacles = [obs for obs in obstacle_list 
+                            if self.is_obstacle_blocking_path(obs, intended_direction)]
+        
+        if not blocking_obstacles:
+            return []
+        
+        # Prendre l'obstacle le plus proche
+        player_cx = self.player.x + self.player.size_x / 2
+        player_cy = self.player.y + self.player.size_y / 2
+        obstacle = min(blocking_obstacles, 
+                      key=lambda o: (o.centerx - player_cx)**2 + (o.centery - player_cy)**2)
+        
+        self.blocking_obstacle = obstacle
+        
+        # Déterminer les directions perpendiculaires
+        #TODO: remove marge
+        min_clearance_x = self.player.size_x
+        min_clearance_y = self.player.size_y
+        
+        if intended_direction in ['UP', 'DOWN']:
+            # Mesurer les passages à gauche et à droite
+            left_gap = self.measure_gap(obstacle, wall_list, 'LEFT')
+            right_gap = self.measure_gap(obstacle, wall_list, 'RIGHT')
+            
+            # Choisir le passage le plus large si le joueur peut y passer
+            if left_gap >= min_clearance_x and (right_gap < min_clearance_x or left_gap >= right_gap):
+                return self.create_squeeze_instructions(obstacle, 'LEFT', intended_direction)
+            elif right_gap >= min_clearance_x:
+                return self.create_squeeze_instructions(obstacle, 'RIGHT', intended_direction)
+        else:  # LEFT or RIGHT
+            # Mesurer les passages en haut et en bas
+            up_gap = self.measure_gap(obstacle, wall_list, 'UP')
+            down_gap = self.measure_gap(obstacle, wall_list, 'DOWN')
+            
+            if up_gap >= min_clearance_y and (down_gap < min_clearance_y or up_gap >= down_gap):
+                return self.create_squeeze_instructions(obstacle, 'UP', intended_direction)
+            elif down_gap >= min_clearance_y:
+                return self.create_squeeze_instructions(obstacle, 'DOWN', intended_direction)
+        
+        return []
+
+    def is_obstacle_cleared(self, obstacle, intended_direction):
+        """Vérifie si on a dépassé l'obstacle en utilisant les dimensions exactes."""
+        if obstacle is None:
+            return True
+        
+        player_cx = self.player.x + self.player.size_x / 2
+        player_cy = self.player.y + self.player.size_y / 2
+        
+        dx = obstacle.centerx - player_cx
+        dy = obstacle.centery - player_cy
+        
+        # Distance de clearance = demi-dimensions combinées + petite marge
+        clearance_x = (self.player.size_x + obstacle.width) / 2 + 2
+        clearance_y = (self.player.size_y + obstacle.height) / 2 + 2
+        
+        # L'obstacle est derrière nous dans la direction voulue
+        if intended_direction == 'UP' and dy > clearance_y:
+            return True
+        elif intended_direction == 'DOWN' and dy < -clearance_y:
+            return True
+        elif intended_direction == 'LEFT' and dx > clearance_x:
+            return True
+        elif intended_direction == 'RIGHT' and dx < -clearance_x:
+            return True
+        
+        return False
+
+    def activate_squeeze_mode(self, blocked_direction):
+        """Active le mode squeeze pour contourner un obstacle bloquant.
+        
+        Args:
+            blocked_direction: 'UP', 'DOWN', 'LEFT', 'RIGHT' - direction bloquée
+        
+        Returns:
+            True si squeeze mode activé avec succès, False sinon
+        """
+        self.intended_direction = blocked_direction
+        squeeze_path = self.find_squeeze_path(blocked_direction)
+        
+        if squeeze_path:
+            self.mode = 'SQUEEZE'
+            self.squeeze_instructions = squeeze_path
+            return True
+        else:
+            # Impossible de contourner, replanifier
+            self.recompute_path()
+            return False
+
     # ---------------- HOMING mode: precise navigation to items ----------------
 
     def compute_direction_to_target(self, target_rect):
@@ -308,6 +538,26 @@ class PlayerAI:
 
     def get_next_instruction(self):
         """Return the next direction for the player, or None if nothing to do."""
+
+        # SQUEEZE mode: navigating around a blocking obstacle
+        if self.mode == 'SQUEEZE':
+            if self.squeeze_instructions:
+                instr = self.squeeze_instructions.pop(0)
+                
+                # Vérifier si on a dépassé l'obstacle
+                if not self.squeeze_instructions and self.is_obstacle_cleared(self.blocking_obstacle, self.intended_direction):
+                    # Obstacle dépassé, retour au mode normal
+                    self.mode = 'PATH'
+                    self.blocking_obstacle = None
+                    self.apply_speed_adjustment(1.0)
+                
+                return instr
+            else:
+                # Plus d'instructions de squeeze, retour au mode PATH
+                self.mode = 'PATH'
+                self.blocking_obstacle = None
+                self.apply_speed_adjustment(1.0)
+                return self.get_next_instruction()
 
         # If we are recentering, consume recenter instructions first
         if self.mode == 'RECENTER':
@@ -384,6 +634,7 @@ class PlayerAI:
         if self.instr_index < len(self.instructions):
             instr = self.instructions[self.instr_index]
             self.instr_index += 1
+            self.intended_direction = instr  # Sauvegarder pour squeeze mode
             
             # *** LOGIQUE FLOUE: Vérifier les obstacles même en mode PATH ***
             obstacle_info = self.compute_obstacle_danger(instr)

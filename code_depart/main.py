@@ -19,6 +19,6 @@ if __name__ == '__main__':
     with PrologMQI() as mqi_file:
         with mqi_file.create_thread() as prolog_thread:
             prolog_thread.query("[prolog/porte]")
-            theAPP = App('assets/Mazes/mazeLarge_1', prolog_thread)
+            theAPP = App('assets/Mazes/mazeLarge_2', prolog_thread)
             theAPP.on_execute()
 
