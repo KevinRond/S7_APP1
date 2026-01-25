@@ -608,20 +608,17 @@ class PlayerAI:
 
         # Normal path-following mode (PATH)
 
-        # Vérifier si un item est proche pour passer en mode HOMING
-        nearest_item = self.get_nearest_item_in_perception()
-        if nearest_item:
-            player_cx = self.player.x + self.player.size_x / 2
-            player_cy = self.player.y + self.player.size_y / 2
-            dx = nearest_item.centerx - player_cx
-            dy = nearest_item.centery - player_cy
-            distance = (dx**2 + dy**2)**0.5
-            
-            # Activer HOMING si assez proche
-            if distance < HOMING_ACTIVATION_DISTANCE:
-                self.mode = 'HOMING'
-                self.current_target = nearest_item
-                return self.get_next_instruction()
+        # Vérifier si on est sur la dernière tuile du chemin pour activer HOMING
+        if self.path and len(self.path) > 0:
+            # Si on est sur l'avant-dernière tuile ou la dernière tuile du chemin
+            current_tile = self.player_tile()
+            if current_tile == self.path[-1] or (len(self.path) >= 2 and current_tile == self.path[-2]):
+                # Vérifier s'il y a un item dans la perception
+                nearest_item = self.get_nearest_item_in_perception()
+                if nearest_item:
+                    self.mode = 'HOMING'
+                    self.current_target = nearest_item
+                    return self.get_next_instruction()
 
         # Position-based path following
         if not self.path or self.path_index >= len(self.path):
