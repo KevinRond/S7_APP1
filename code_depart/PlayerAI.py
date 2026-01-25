@@ -29,8 +29,7 @@ class PlayerAI:
         self.maze = maze          # Maze instance
         self.player = player      # Player instance
         self.path = []            # list of (row, col)
-        self.instructions = []    # list of 'UP'/'DOWN'/'LEFT'/'RIGHT'
-        self.instr_index = 0      # index into path instructions
+        self.path_index = 0       # current waypoint index in path
         self.mode = 'PATH'        # 'PATH', 'RECENTER', 'HOMING', or 'SQUEEZE'
         self.center_instructions = []  # recenter sequence when in RECENTER mode
         # Positions (row, col) of targets already visited when chaining
@@ -82,36 +81,28 @@ class PlayerAI:
 
     # ---------------- Path and instructions ----------------
 
-    def path_to_instructions(self, path):
-        instructions = []
-        if not path or len(path) < 2:
-            return instructions
-
-        for (r1, c1), (r2, c2) in zip(path, path[1:]):
-            dr, dc = r2 - r1, c2 - c1
-            
-            if dr == -1 and dc == 0:
-                direction = 'UP'
-                tile_size = self.maze.tile_size_y  # Use Y for vertical
-            elif dr == 1 and dc == 0:
-                direction = 'DOWN'
-                tile_size = self.maze.tile_size_y
-            elif dr == 0 and dc == -1:
-                direction = 'LEFT'
-                tile_size = self.maze.tile_size_x
-            elif dr == 0 and dc == 1:
-                direction = 'RIGHT'
-                tile_size = self.maze.tile_size_x
-            else:
-                continue
-            
-            # Use ceil to avoid being short
-            steps = max(1, int(round(tile_size / self.player.speed)))
-            
-            for _ in range(steps):
-                instructions.append(direction)
-
-        return instructions
+    def get_direction_to_tile(self, target_row, target_col):
+        """Calculate direction from current player position to target tile.
+        
+        Returns:
+            Direction string ('UP', 'DOWN', 'LEFT', 'RIGHT') or None if at target.
+        """
+        current_row, current_col = self.player_tile()
+        
+        dr = target_row - current_row
+        dc = target_col - current_col
+        
+        # Prioritize vertical movement if both needed (Manhattan style)
+        if dr < 0:
+            return 'UP'
+        elif dr > 0:
+            return 'DOWN'
+        elif dc < 0:
+            return 'LEFT'
+        elif dc > 0:
+            return 'RIGHT'
+        else:
+            return None  # Already at target tile
 
     def recompute_path(self):
         """Recompute a normal A* path from the player's current tile.
@@ -129,10 +120,10 @@ class PlayerAI:
         else:
             self.path = astar.find_path_from(start_tile)
             print(f"self.path: {self.path}")
-        # print("A* start:", start_tile, "path length:", len(self.path))
-        self.instructions = self.path_to_instructions(self.path)
-        # print("instructions:", self.instructions[:10])  # preview
-        self.instr_index = 0
+        
+        # Position-based tracking: start at first waypoint
+        # Path index 0 is current position, so we target index 1 first
+        self.path_index = 1 if len(self.path) > 1 else 0
         self.mode = 'PATH'
         self.center_instructions = []
 
@@ -632,31 +623,50 @@ class PlayerAI:
                 self.current_target = nearest_item
                 return self.get_next_instruction()
 
-        # If we've finished the current instruction list and chaining is
-        # enabled, mark the last target as completed and recompute a new path
-        # to the next closest one (if any).
-        # if ENABLE_CHAIN_TARGETS and self.instr_index >= len(self.instructions):
-        #     if self.path:
-        #         self.completed_targets.add(self.path[-1])
-        #     self.recompute_path()
-
-        if self.instr_index < len(self.instructions):
-            instr = self.instructions[self.instr_index]
-            self.instr_index += 1
-            self.intended_direction = instr  # Sauvegarder pour squeeze mode
+        # Position-based path following
+        if not self.path or self.path_index >= len(self.path):
+            # No path or reached end of path
+            self.recompute_path()
+            print("I got nothin")
+            return None
+        
+        # Get current target tile from path
+        target_row, target_col = self.path[self.path_index]
+        current_row, current_col = self.player_tile()
+        
+        # Check if we've reached the current waypoint
+        if (current_row, current_col) == (target_row, target_col):
+            # Reached waypoint, advance to next one
+            self.path_index += 1
             
-            # *** LOGIQUE FLOUE: Vérifier les obstacles même en mode PATH ***
-            obstacle_info = self.compute_obstacle_danger(instr)
-            self.apply_speed_adjustment(obstacle_info['speed_multiplier'])
+            # Check if we've completed the entire path
+            if self.path_index >= len(self.path):
+                # Mark target as completed if chaining is enabled
+                if ENABLE_CHAIN_TARGETS and self.path:
+                    self.completed_targets.add(self.path[-1])
+                self.recompute_path()
+                return None
             
-            # Si danger critique, utiliser direction alternative
-            # Jvois pas pk on remet un check du danger score ici
-            # On check deja le danger score pour decider si on a besoin d une autre direction
-            if obstacle_info['danger_score'] > 0.7 and obstacle_info['suggested_direction']:
-                return obstacle_info['suggested_direction']
-            print (f"instr:", instr)
-            return instr
-
-        self.recompute_path()
-        print("I got nothin")
-        return None
+            # Get next target
+            target_row, target_col = self.path[self.path_index]
+        
+        # Calculate direction to current target tile
+        instr = self.get_direction_to_tile(target_row, target_col)
+        
+        if instr is None:
+            # Shouldn't happen, but advance just in case
+            self.path_index += 1
+            return self.get_next_instruction()
+        
+        self.intended_direction = instr  # Sauvegarder pour squeeze mode
+        
+        # *** LOGIQUE FLOUE: Vérifier les obstacles même en mode PATH ***
+        obstacle_info = self.compute_obstacle_danger(instr)
+        self.apply_speed_adjustment(obstacle_info['speed_multiplier'])
+        
+        # Si danger critique, utiliser direction alternative
+        if obstacle_info['danger_score'] > 0.7 and obstacle_info['suggested_direction']:
+            return obstacle_info['suggested_direction']
+        
+        print(f"instr:", instr)
+        return instr

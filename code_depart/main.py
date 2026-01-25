@@ -5,6 +5,7 @@
 from swiplserver import PrologMQI
 from Games2D import *
 import A_star
+import ctypes
 # import ctypes
 
 if __name__ == '__main__':
@@ -15,7 +16,7 @@ if __name__ == '__main__':
 
     # If the window is too big for the screen, uncomment the following line
     # The effect of fixed pixel algorithms has NOT BEEN TESTED. PROCEED WITH CAUTION.
-    # ctypes.windll.user32.SetProcessDPIAware()
+    ctypes.windll.user32.SetProcessDPIAware()
     with PrologMQI() as mqi_file:
         with mqi_file.create_thread() as prolog_thread:
             prolog_thread.query("[prolog/porte]")
