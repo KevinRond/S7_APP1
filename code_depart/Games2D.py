@@ -109,54 +109,54 @@ class App:
 
     def move_player_right(self):
         self.player.moveRight()
+        if self.on_coin_collision() or self.on_treasure_collision():
+            print("COLLIDED WITH ITEM")
+            self.playerAI.recompute_path()
         if self.on_collision():
                 if hasattr(self, 'playerAI') and self.playerAI is not None:
                     if self.on_wall_collision():
                         self.playerAI.start_recenter()
                     elif self.on_obstacle_collision() and self.playerAI.is_obstacle_blocking_player('RIGHT'):
                         self.playerAI.activate_squeeze_mode('RIGHT')
-                    elif self.on_coin_collision() or self.on_treasure_collision():
-                        self.playerAI.mark_tile_current_tile_completed()
-                        self.playerAI.recompute_path()
                 self.player.moveLeft()
 
     def move_player_left(self):
         self.player.moveLeft()
+        if self.on_coin_collision() or self.on_treasure_collision():
+            print("COLLIDED WITH ITEM")
+            self.playerAI.recompute_path()
         if self.on_collision():
                 if hasattr(self, 'playerAI') and self.playerAI is not None:
                     if self.on_wall_collision():
                         self.playerAI.start_recenter()
                     elif self.on_obstacle_collision() and self.playerAI.is_obstacle_blocking_player('LEFT'):
                         self.playerAI.activate_squeeze_mode('LEFT')
-                    elif self.on_coin_collision() or self.on_treasure_collision():
-                        self.playerAI.mark_tile_current_tile_completed()
-                        self.playerAI.recompute_path()
                 self.player.moveRight()
 
     def move_player_up(self):
         self.player.moveUp()
+        if self.on_coin_collision() or self.on_treasure_collision():
+            print("COLLIDED WITH ITEM")
+            self.playerAI.recompute_path()
         if self.on_collision():
                 if hasattr(self, 'playerAI') and self.playerAI is not None:
                     if self.on_wall_collision():
                         self.playerAI.start_recenter()
                     elif self.on_obstacle_collision() and self.playerAI.is_obstacle_blocking_player('UP'):
                         self.playerAI.activate_squeeze_mode('UP')
-                    elif self.on_coin_collision() or self.on_treasure_collision():
-                        self.playerAI.mark_tile_current_tile_completed()
-                        self.playerAI.recompute_path()
                 self.player.moveDown()
 
     def move_player_down(self):
         self.player.moveDown()
+        if self.on_coin_collision() or self.on_treasure_collision():
+            print("COLLIDED WITH ITEM")
+            self.playerAI.recompute_path()
         if self.on_collision():
                 if hasattr(self, 'playerAI') and self.playerAI is not None:
                     if self.on_wall_collision():
                         self.playerAI.start_recenter()
                     elif self.on_obstacle_collision() and self.playerAI.is_obstacle_blocking_player('DOWN'):
                         self.playerAI.activate_squeeze_mode('DOWN')
-                    elif self.on_coin_collision() or self.on_treasure_collision():
-                        self.playerAI.mark_tile_current_tile_completed()
-                        self.playerAI.recompute_path()
                 self.player.moveUp()
 
     def on_wall_collision(self):
@@ -176,7 +176,8 @@ class App:
     def on_coin_collision(self):
         collide_index = self.player.get_rect().collidelist(self.maze.coinList)
         if not collide_index == -1:
-            self.maze.coinList.pop(collide_index)
+            coin = self.maze.coinList.pop(collide_index)
+            self.playerAI.mark_tile_completed(coin.x, coin.y)
             return True
         else:
             return False
@@ -184,7 +185,8 @@ class App:
     def on_treasure_collision(self):
         collide_index = self.player.get_rect().collidelist(self.maze.treasureList)
         if not collide_index == -1:
-            self.maze.treasureList.pop(collide_index)
+            treasure = self.maze.treasureList.pop(collide_index)
+            self.playerAI.mark_tile_completed(treasure.x, treasure.y)
             return True
         else:
             return False

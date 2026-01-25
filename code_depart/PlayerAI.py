@@ -533,9 +533,10 @@ class PlayerAI:
         else:
             return None  # Arrivé à destination
         
-    def mark_tile_current_tile_completed(self):
+    def mark_tile_completed(self, x, y):
         """Marque la tuile actuelle du joueur comme cible complétée."""
-        row, col = self.player_tile()
+        row = int(y / self.maze.tile_size_y)
+        col = int(x / self.maze.tile_size_x)
         print("current_tile marked as completed:", (row, col))
         self.completed_targets.add((row, col))
 
