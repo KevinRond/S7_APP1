@@ -23,7 +23,7 @@ class A_star:
         if i < 0 or j < 0 or i >= self.rows or j >= self.cols:
             return False
         cell = self.grid[i][j]
-        # On bloque seulement les murs et les obstacles.
+        # On bloque seulement les murs.
         # Les monstres, pièces, trésors, portes et la sortie restent atteignables
         # (les portes sont traitées comme "ouvertes" pour l'algorithme de cheminement).
         return cell not in ('1')

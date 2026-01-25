@@ -11,10 +11,6 @@ ENABLE_CHAIN_TARGETS = True
 HOMING_ACTIVATION_DISTANCE = 60  # pixels - distance pour activer HOMING
 PRECISION_THRESHOLD = 8  # pixels - précision finale pour considérer qu'on est arrivé
 
-# Fuzzy logic for obstacle avoidance
-OBSTACLE_DANGER_RADIUS = 40  # pixels - rayon de danger autour des obstacles
-OBSTACLE_CRITICAL_RADIUS = 20  # pixels - rayon critique (très dangereux)
-SPEED_REDUCTION_FACTOR = 0.6  # facteur de réduction de vitesse près des obstacles
 
 
 
@@ -87,33 +83,32 @@ class PlayerAI:
     # ---------------- Path and instructions ----------------
 
     def path_to_instructions(self, path):
-        """Convert a list of tiles [(r,c), ...] to move instructions.
-
-        Each step between two tiles is expanded into several identical
-        instructions so that the player approximately moves one full tile.
-        """
         instructions = []
         if not path or len(path) < 2:
             return instructions
 
-        # Approximate number of pixel steps to traverse one tile
-        # (use horizontal tile size; vertical is similar in this game).
-        steps_per_tile = max(1, int(self.maze.tile_size_x / self.player.speed))
-
         for (r1, c1), (r2, c2) in zip(path, path[1:]):
             dr, dc = r2 - r1, c2 - c1
+            
             if dr == -1 and dc == 0:
                 direction = 'UP'
+                tile_size = self.maze.tile_size_y  # Use Y for vertical
             elif dr == 1 and dc == 0:
                 direction = 'DOWN'
+                tile_size = self.maze.tile_size_y
             elif dr == 0 and dc == -1:
                 direction = 'LEFT'
+                tile_size = self.maze.tile_size_x
             elif dr == 0 and dc == 1:
                 direction = 'RIGHT'
+                tile_size = self.maze.tile_size_x
             else:
                 continue
-
-            for _ in range(steps_per_tile):
+            
+            # Use ceil to avoid being short
+            steps = max(1, int(round(tile_size / self.player.speed)))
+            
+            for _ in range(steps):
                 instructions.append(direction)
 
         return instructions
@@ -124,13 +119,16 @@ class PlayerAI:
         If ENABLE_CHAIN_TARGETS is True, already-completed targets are
         ignored so the player will move on to the next closest one.
         """
+        print("Recompute was called")
         start_tile = self.player_tile()
         astar = A_star(self.maze.maze)
 
         if ENABLE_CHAIN_TARGETS and self.completed_targets:
             self.path = astar.find_path_from(start_tile, excluded_targets=self.completed_targets)
+            print(f"self.path: {self.path}")
         else:
             self.path = astar.find_path_from(start_tile)
+            print(f"self.path: {self.path}")
         # print("A* start:", start_tile, "path length:", len(self.path))
         self.instructions = self.path_to_instructions(self.path)
         # print("instructions:", self.instructions[:10])  # preview
@@ -440,7 +438,6 @@ class PlayerAI:
         self.blocking_obstacle = obstacle
         
         # Déterminer les directions perpendiculaires
-        #TODO: remove marge
         min_clearance_x = self.player.size_x
         min_clearance_y = self.player.size_y
         
@@ -535,6 +532,12 @@ class PlayerAI:
             return 'DOWN' if dy > 0 else 'UP'
         else:
             return None  # Arrivé à destination
+        
+    def mark_tile_current_tile_completed(self):
+        """Marque la tuile actuelle du joueur comme cible complétée."""
+        row, col = self.player_tile()
+        print("current_tile marked as completed:", (row, col))
+        self.completed_targets.add((row, col))
 
     def get_next_instruction(self):
         """Return the next direction for the player, or None if nothing to do."""
@@ -557,7 +560,7 @@ class PlayerAI:
                 self.mode = 'PATH'
                 self.blocking_obstacle = None
                 self.apply_speed_adjustment(1.0)
-                return self.get_next_instruction()
+                return self.recompute_path()
 
         # If we are recentering, consume recenter instructions first
         if self.mode == 'RECENTER':
@@ -574,25 +577,30 @@ class PlayerAI:
 
         # HOMING mode: precise navigation to nearby items with obstacle avoidance
         if self.mode == 'HOMING':
+            print("HOMING")
             # Vérifier si l'item cible existe encore
             target = self.get_nearest_item_in_perception()
             
             if target is None:
                 # Plus d'item visible, retour au mode PATH
+                print("No target found, switching to PATH")
                 self.mode = 'PATH'
                 self.current_target = None
                 self.apply_speed_adjustment(1.0)  # Restaurer vitesse normale
-                return self.get_next_instruction()
+                self.mark_tile_current_tile_completed()
+                return self.recompute_path()
             
             # Calculer la direction vers l'item
             intended_direction = self.compute_direction_to_target(target)
             
             if intended_direction is None:
                 # Arrivé à l'item, retour au mode PATH
+                print("No intended direction found, switching to PATH")
                 self.mode = 'PATH'
                 self.current_target = None
                 self.apply_speed_adjustment(1.0)
-                return self.get_next_instruction()
+                self.mark_tile_current_tile_completed()
+                return self.recompute_path()
             
             # *** LOGIQUE FLOUE: Évaluer les obstacles ***
             obstacle_info = self.compute_obstacle_danger(intended_direction)
@@ -626,10 +634,10 @@ class PlayerAI:
         # If we've finished the current instruction list and chaining is
         # enabled, mark the last target as completed and recompute a new path
         # to the next closest one (if any).
-        if ENABLE_CHAIN_TARGETS and self.instr_index >= len(self.instructions):
-            if self.path:
-                self.completed_targets.add(self.path[-1])
-            self.recompute_path()
+        # if ENABLE_CHAIN_TARGETS and self.instr_index >= len(self.instructions):
+        #     if self.path:
+        #         self.completed_targets.add(self.path[-1])
+        #     self.recompute_path()
 
         if self.instr_index < len(self.instructions):
             instr = self.instructions[self.instr_index]
@@ -641,10 +649,13 @@ class PlayerAI:
             self.apply_speed_adjustment(obstacle_info['speed_multiplier'])
             
             # Si danger critique, utiliser direction alternative
+            # Jvois pas pk on remet un check du danger score ici
+            # On check deja le danger score pour decider si on a besoin d une autre direction
             if obstacle_info['danger_score'] > 0.7 and obstacle_info['suggested_direction']:
                 return obstacle_info['suggested_direction']
-            
+            print (f"instr:", instr)
             return instr
 
-        # No instructions left and no new path found
+        self.recompute_path()
+        print("I got nothin")
         return None
