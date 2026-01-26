@@ -1,127 +1,159 @@
-import numpy as np
 import skfuzzy as fuzz
 from skfuzzy import control as ctrl
+import matplotlib.pyplot as plt
+import numpy as np
+from Constants import HEIGHT
 
 
-class FuzzyObstacleController:
-    """Fuzzy logic controller for obstacle avoidance using scikit-fuzzy."""
+def createFuzzyControllerObstacle():
+    obs_angl = ctrl.Antecedent(np.linspace(-90, 90, 1000), 'angle_obstacle0')
+    mur_angl = ctrl.Antecedent(np.linspace(-90, 90, 1000), 'angle_mur0')
+    obs_dist = ctrl.Antecedent(np.linspace(0, 80, 1000), 'distance_obstacle0')
+    mur_dist = ctrl.Antecedent(np.linspace(0, 80, 1000), 'distance_mur0')
+
+    action = ctrl.Consequent(np.linspace(-90, 90, 1000), 'output1', defuzzify_method='centroid')
+
+    action.accumulation_method = np.fmax
+
+    for obj in [obs_angl, mur_angl]:
+        obj['gauche'] = fuzz.trapmf(obj.universe, [-71, -40, -25, 0])
+        obj['droite'] = fuzz.trapmf(obj.universe, [0, 25, 40, 71])
+        obj['gauche_completement'] = fuzz.trapmf(obj.universe, [-90, -90, -80, -38])
+        obj['droite_completement'] = fuzz.trapmf(obj.universe, [38, 80, 90, 90])
+        obj['centre'] = fuzz.trimf(obj.universe, [-32, 0, 32])
+
+    obs_dist['proche'] = fuzz.trapmf(obs_dist.universe, [0, 0, 35, 45])
+    obs_dist['loin'] = fuzz.trapmf(obs_dist.universe, [35, 45, 80, 80])
+
+    mur_dist['proche'] = fuzz.trapmf(mur_dist.universe, [0, 0, 35, 50])
+    mur_dist['loin'] = fuzz.trapmf(mur_dist.universe, [35, 50, 80, 80])
+
+    action['gauche'] = fuzz.trapmf(action.universe, [-90, -90, -60, 0])
+    action['droite'] = fuzz.trapmf(action.universe, [0, 60, 90, 90])
+    action['tout_droit'] = fuzz.trimf(action.universe, [-40, 0, 40])
+
+    rules = []
+
+    # Obstacles
+    rules.append(ctrl.Rule(antecedent=(obs_angl['droite'] | mur_angl['droite'] | obs_angl['centre'] | mur_angl['centre']),
+                consequent=action['gauche']))
+
+    rules.append(ctrl.Rule(antecedent=(obs_angl['gauche'] | mur_angl['gauche']),
+                consequent=action['droite']))
+
+    rules.append(ctrl.Rule(antecedent=((obs_angl['droite_completement'] | obs_angl['gauche_completement']) & obs_dist['loin']),
+                consequent=action['tout_droit']))
+
+    rules.append(ctrl.Rule(antecedent=((mur_angl['droite_completement'] | mur_angl['gauche_completement']) | mur_dist['loin']),
+                consequent=action['tout_droit']))
     
+    # Conjunction (and_func) and disjunction (or_func) methods for rules:
+    for rule in rules:
+        rule.and_func = np.fmin
+        rule.or_func = np.fmax
+
+    system = ctrl.ControlSystem(rules)
+    sim = ctrl.ControlSystemSimulation(system)
+    return sim
+
+
+class LogiqueFlou:
     def __init__(self):
-        # Input variables
-        # Distance: 0-100 pixels (normalized range for obstacle perception)
-        self.obstacle_distance = ctrl.Antecedent(np.linspace(0, 100, 1000), 'obstacle_distance')
-        
-        # Path alignment: -1 to 1 (-1=opposite direction, 0=perpendicular, 1=same direction)
-        self.path_alignment = ctrl.Antecedent(np.linspace(-1, 1, 1000), 'path_alignment')
-        
-        # Output variables
-        # Danger score: 0 to 1 (0=safe, 1=very dangerous)
-        self.danger_score = ctrl.Consequent(np.linspace(0, 1, 1000), 'danger_score', defuzzify_method='centroid')
-        
-        # Speed multiplier: 0.5 to 1.0 (how much to slow down)
-        self.speed_multiplier = ctrl.Consequent(np.linspace(0.5, 1.0, 1000), 'speed_multiplier', defuzzify_method='centroid')
-        
-        # Accumulation method
-        self.danger_score.accumulation_method = np.fmax
-        self.speed_multiplier.accumulation_method = np.fmax
-        
-        # ============ Membership functions ============
-        
-        # Obstacle distance (in pixels)
-        # Critical: 0-5px, Close: 5-15px, Medium: 15-30px, Far: 30+px
-        self.obstacle_distance['critical'] = fuzz.trapmf(self.obstacle_distance.universe, [0, 0, 3, 8])
-        self.obstacle_distance['close'] = fuzz.trimf(self.obstacle_distance.universe, [5, 10, 18])
-        self.obstacle_distance['medium'] = fuzz.trimf(self.obstacle_distance.universe, [15, 22, 35])
-        self.obstacle_distance['far'] = fuzz.trapmf(self.obstacle_distance.universe, [30, 40, 100, 100])
-        
-        # Path alignment (-1 to 1)
-        # Opposite: going away, Perpendicular: crossing, Aligned: heading toward
-        self.path_alignment['opposite'] = fuzz.trapmf(self.path_alignment.universe, [-1.0, -1.0, -0.5, -0.1])
-        self.path_alignment['perpendicular'] = fuzz.trimf(self.path_alignment.universe, [-0.3, 0.0, 0.3])
-        self.path_alignment['aligned'] = fuzz.trapmf(self.path_alignment.universe, [0.1, 0.5, 1.0, 1.0])
-        
-        # Danger score (0 to 1)
-        self.danger_score['safe'] = fuzz.trapmf(self.danger_score.universe, [0.0, 0.0, 0.2, 0.4])
-        self.danger_score['moderate'] = fuzz.trimf(self.danger_score.universe, [0.3, 0.5, 0.7])
-        self.danger_score['high'] = fuzz.trapmf(self.danger_score.universe, [0.6, 0.8, 1.0, 1.0])
-        
-        # Speed multiplier (0.5 to 1.0)
-        self.speed_multiplier['slow'] = fuzz.trapmf(self.speed_multiplier.universe, [0.5, 0.5, 0.6, 0.7])
-        self.speed_multiplier['moderate'] = fuzz.trimf(self.speed_multiplier.universe, [0.65, 0.75, 0.85])
-        self.speed_multiplier['fast'] = fuzz.trapmf(self.speed_multiplier.universe, [0.8, 0.9, 1.0, 1.0])
-        
-        # ============ Fuzzy rules ============
-        self.rules = []
-        
-        # Critical distance rules - always dangerous if very close
-        self.rules.append(ctrl.Rule(self.obstacle_distance['critical'] & self.path_alignment['aligned'], 
-                                    (self.danger_score['high'], self.speed_multiplier['slow'])))
-        self.rules.append(ctrl.Rule(self.obstacle_distance['critical'] & self.path_alignment['perpendicular'], 
-                                    (self.danger_score['high'], self.speed_multiplier['slow'])))
-        self.rules.append(ctrl.Rule(self.obstacle_distance['critical'] & self.path_alignment['opposite'], 
-                                    (self.danger_score['moderate'], self.speed_multiplier['moderate'])))
-        
-        # Close distance rules - danger depends on alignment
-        self.rules.append(ctrl.Rule(self.obstacle_distance['close'] & self.path_alignment['aligned'], 
-                                    (self.danger_score['high'], self.speed_multiplier['slow'])))
-        self.rules.append(ctrl.Rule(self.obstacle_distance['close'] & self.path_alignment['perpendicular'], 
-                                    (self.danger_score['moderate'], self.speed_multiplier['moderate'])))
-        self.rules.append(ctrl.Rule(self.obstacle_distance['close'] & self.path_alignment['opposite'], 
-                                    (self.danger_score['safe'], self.speed_multiplier['fast'])))
-        
-        # Medium distance rules
-        self.rules.append(ctrl.Rule(self.obstacle_distance['medium'] & self.path_alignment['aligned'], 
-                                    (self.danger_score['moderate'], self.speed_multiplier['moderate'])))
-        self.rules.append(ctrl.Rule(self.obstacle_distance['medium'] & self.path_alignment['perpendicular'], 
-                                    (self.danger_score['safe'], self.speed_multiplier['fast'])))
-        self.rules.append(ctrl.Rule(self.obstacle_distance['medium'] & self.path_alignment['opposite'], 
-                                    (self.danger_score['safe'], self.speed_multiplier['fast'])))
-        
-        # Far distance rules - always safe
-        self.rules.append(ctrl.Rule(self.obstacle_distance['far'], 
-                                    (self.danger_score['safe'], self.speed_multiplier['fast'])))
-        
-        # Set rule conjunction and disjunction methods
-        for rule in self.rules:
-            rule.and_func = np.fmin
-            rule.or_func = np.fmax
-        
-        # Create control system
-        self.control_system = ctrl.ControlSystem(self.rules)
-        self.sim = ctrl.ControlSystemSimulation(self.control_system)
-    
-    def compute(self, obstacle_dist, path_alignment):
-        """
-        Compute fuzzy outputs for obstacle avoidance.
-        
-        Args:
-            obstacle_dist: Distance to nearest obstacle in pixels (0-100)
-            path_alignment: Alignment with movement direction (-1 to 1)
-                           -1 = moving away, 0 = perpendicular, 1 = moving toward
-        
-        Returns:
-            dict with 'danger_score' (0-1) and 'speed_multiplier' (0.5-1.0)
-        """
-        # Clamp inputs to valid ranges
-        obstacle_dist = float(np.clip(obstacle_dist, 0, 100))
-        path_alignment = float(np.clip(path_alignment, -1, 1))
-        
-        # Set inputs
-        self.sim.input['obstacle_distance'] = obstacle_dist
-        self.sim.input['path_alignment'] = path_alignment
-        
-        # Compute output
-        try:
-            self.sim.compute()
-            danger = self.sim.output['danger_score']
-            speed = self.sim.output['speed_multiplier']
-        except Exception as e:
-            # Fallback if computation fails
-            print(f"Fuzzy computation error: {e}")
-            danger = 0.0
-            speed = 1.0
-        
-        return {
-            'danger_score': danger,
-            'speed_multiplier': speed
-        }
+        self.current_position = 0
+        self.angle_joueur = 0
+        self.perception = []
+        self.list_angle_vu_objet = []
+        self.angle_vision_joueur = 0
+        self.input_obstacle = []
+        self.input_mur = []
+        self.input_item = []
+
+        self.fuzz_ctrl = createFuzzyControllerObstacle()
+
+    def get_position_player(self, player):
+        current_position = player.get_rect().center
+        return current_position
+
+    def associer_input_flou(self, max_range, list_input, input_name):
+
+        if len(list_input) < max_range:
+            angle = 90
+            distance = 80
+
+            for i in range(max_range - len(list_input)):
+                list_input.append((angle, distance))
+
+        list_input = sorted(list_input, key=lambda x: x[1])
+
+        for i in range(max_range):
+            self.fuzz_ctrl.input['angle_' + input_name + str(i)] = list_input[i][0]
+            self.fuzz_ctrl.input['distance_' + input_name + str(i)] = list_input[i][1]
+
+    def run(self, last_direction, last_a_star_direction, player, perception):
+        self.angle_vision_joueur = last_direction
+        wall_list, obstacle_list, item_list, monster_list, door_list = perception
+
+
+        variables = self.get_variables(obstacle_list, player, 'obstacle')
+        self.associer_input_flou(1, variables, 'obstacle')
+
+        variables = self.get_variables(wall_list, player, 'mur')
+        self.associer_input_flou(1, variables, 'mur')
+
+        self.fuzz_ctrl.compute()
+        direction = self.fuzz_ctrl.output['output1']
+
+        has_obstacle = False
+        if len(variables) > 0:
+            has_obstacle = True
+        return direction, has_obstacle
+
+    def get_distance(self, p1, p2):
+        return np.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
+
+    def get_variables(self, liste_perception, player, name):
+        variables = []
+
+        for perception in liste_perception:
+            point1 = self.get_position_player(player)
+            point2 = perception.center
+
+            point1, point2 = self.convert_coordinates(point1, point2)
+
+            angle_rad = np.arctan2(point2[1] - point1[1], point2[0] - point1[0])
+            angle_deg = np.degrees(angle_rad)
+
+            if angle_deg < 0:
+                angle_deg = angle_deg + 360
+
+            distance = self.get_distance(point1, point2)
+
+            variables.append((angle_deg, distance))
+
+        variables_finales = []
+
+        for i in range(len(variables)):
+            angle_relatif = self.angle_vision_joueur - variables[i][0]
+            if angle_relatif < -180:
+                angle_relatif += 360
+            if angle_relatif > 180:
+                angle_relatif -= 360
+
+            if 90 > angle_relatif > -90:
+                variables_finales.append((angle_relatif, variables[i][1]))
+
+        return variables_finales
+
+    def convert_coordinates(self, p1, p2):
+        # changement de système de coordonné
+        # on veut le point (0, 0) en bas à gauche
+        p1_x, p1_y = p1
+        p2_x, p2_y = p2
+
+        p1_y = HEIGHT - p1_y
+        p2_y = HEIGHT - p2_y
+
+        p1_converted = (p1_x, p1_y)
+        p2_converted = (p2_x, p2_y)
+
+        return p1_converted, p2_converted

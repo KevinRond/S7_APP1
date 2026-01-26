@@ -5,7 +5,7 @@ from Player import *
 from Maze import *
 from Constants import *
 from Sys_Expert import Systeme_Expert
-from PlayerAI import PlayerAI
+from PlayerAI_SIMPLE import PlayerAI
 
 
 class App:
@@ -92,17 +92,49 @@ class App:
 
     # FONCTION À Ajuster selon votre format d'instruction
     def on_AI_input(self, instruction):
-        if instruction == 'RIGHT':
-            self.move_player_right()
+        # Handle angle-based instruction (supports diagonal movement)
+        if isinstance(instruction, (int, float)):
+            # Angle-based instruction
+            if instruction <= 22.5 or instruction >= 337.5:
+                self.move_player_right()
 
-        if instruction == 'LEFT':
-            self.move_player_left()
+            elif 67.5 >= instruction >= 22.5:
+                self.move_player_right()
+                self.move_player_up()
 
-        if instruction == 'UP':
-            self.move_player_up()
+            elif 112.5 >= instruction >= 67.5:
+                self.move_player_up()
 
-        if instruction == 'DOWN':
-            self.move_player_down()
+            elif 157.5 >= instruction >= 112.5:
+                self.move_player_left()
+                self.move_player_up()
+
+            elif 202.5 >= instruction >= 157.5:
+                self.move_player_left()
+
+            elif 247.5 >= instruction >= 202.5:
+                self.move_player_down()
+                self.move_player_left()
+
+            elif 292.5 >= instruction >= 247.5:
+                self.move_player_down()
+
+            elif 337.5 >= instruction >= 292.5:
+                self.move_player_down()
+                self.move_player_right()
+        else:
+            # Legacy string-based instruction
+            if instruction == 'RIGHT':
+                self.move_player_right()
+
+            if instruction == 'LEFT':
+                self.move_player_left()
+
+            if instruction == 'UP':
+                self.move_player_up()
+
+            if instruction == 'DOWN':
+                self.move_player_down()
 
     def on_collision(self):
         return self.on_wall_collision() or self.on_obstacle_collision() or self.on_door_collision()
@@ -113,12 +145,7 @@ class App:
             print("COLLIDED WITH ITEM")
             self.playerAI.recompute_path()
         if self.on_collision():
-                if hasattr(self, 'playerAI') and self.playerAI is not None:
-                    if self.on_wall_collision():
-                        self.playerAI.start_recenter()
-                    elif self.on_obstacle_collision() and self.playerAI.is_obstacle_blocking_player('RIGHT'):
-                        self.playerAI.activate_squeeze_mode('RIGHT')
-                self.player.moveLeft()
+            self.player.moveLeft()
 
     def move_player_left(self):
         self.player.moveLeft()
@@ -126,12 +153,7 @@ class App:
             print("COLLIDED WITH ITEM")
             self.playerAI.recompute_path()
         if self.on_collision():
-                if hasattr(self, 'playerAI') and self.playerAI is not None:
-                    if self.on_wall_collision():
-                        self.playerAI.start_recenter()
-                    elif self.on_obstacle_collision() and self.playerAI.is_obstacle_blocking_player('LEFT'):
-                        self.playerAI.activate_squeeze_mode('LEFT')
-                self.player.moveRight()
+            self.player.moveRight()
 
     def move_player_up(self):
         self.player.moveUp()
@@ -139,12 +161,7 @@ class App:
             print("COLLIDED WITH ITEM")
             self.playerAI.recompute_path()
         if self.on_collision():
-                if hasattr(self, 'playerAI') and self.playerAI is not None:
-                    if self.on_wall_collision():
-                        self.playerAI.start_recenter()
-                    elif self.on_obstacle_collision() and self.playerAI.is_obstacle_blocking_player('UP'):
-                        self.playerAI.activate_squeeze_mode('UP')
-                self.player.moveDown()
+            self.player.moveDown()
 
     def move_player_down(self):
         self.player.moveDown()
@@ -152,12 +169,7 @@ class App:
             print("COLLIDED WITH ITEM")
             self.playerAI.recompute_path()
         if self.on_collision():
-                if hasattr(self, 'playerAI') and self.playerAI is not None:
-                    if self.on_wall_collision():
-                        self.playerAI.start_recenter()
-                    elif self.on_obstacle_collision() and self.playerAI.is_obstacle_blocking_player('DOWN'):
-                        self.playerAI.activate_squeeze_mode('DOWN')
-                self.player.moveUp()
+            self.player.moveUp()
 
     def on_wall_collision(self):
         collide_index = self.player.get_rect().collidelist(self.maze.wallList)
