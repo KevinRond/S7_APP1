@@ -32,16 +32,6 @@ class PlayerAI:
         self.logique_floue = LogiqueFlou()
         self.last_direction = 270  # Initial direction (DOWN in degrees)
         self.direction_a_star = 0  # A* target direction in degrees
-        
-        # Oscillation detection
-        self.fuzzy_use_counter = 0  # Count frames using fuzzy direction
-        self.max_fuzzy_frames = 20  # Max frames before forcing A* to push through
-        
-        # Stuck detection
-        self.last_position = None
-        self.stuck_counter = 0
-        self.stuck_threshold = 5  # Number of frames before considering stuck
-        self.try_opposite_side = False  # Flag to try opposite direction when stuck
 
     # ---------------- Pixel <-> tile conversions ----------------
 
@@ -50,48 +40,31 @@ class PlayerAI:
         row = int(self.player.y / self.maze.tile_size_y)
         col = int(self.player.x / self.maze.tile_size_x)
         return row, col
-    
-    def pixel_to_tile_center_pos(self, pixel_pos):
-        """Convert pixel position to sub-tile center position (3x3 grid within each tile)."""
-        return int(pixel_pos[0] // (self.maze.tile_size_x / 3)), int(pixel_pos[1] // (self.maze.tile_size_y / 3))
-    
-    def tile_pos_to_center_pos(self, tile_pos):
-        """Convert tile position (row, col) to center position in 3x3 sub-grid.
-        Returns (center_col, center_row) in sub-tile coordinates."""
-        row, col = tile_pos
-        return ((col * 3) + 1), ((row * 3) + 1)  # Note: returns (x, y) format
 
     # ---------------- Path and instructions ----------------
 
-    def get_direction_to_center(self, target_row, target_col):
-        """Calculate direction from current player CENTER position to target tile CENTER.
+    def get_direction_to_tile(self, target_row, target_col):
+        """Calculate direction from current player position to target tile.
         
-        Uses 3x3 sub-grid for precise center-based navigation.
         Returns:
-            Direction string ('UP', 'DOWN', 'LEFT', 'RIGHT') or None if at target center.
+            Direction string ('UP', 'DOWN', 'LEFT', 'RIGHT') or None if at target.
         """
-        # Get player's current center position in sub-tile coordinates
-        player_center = self.player.get_rect().center
-        curr_center_x, curr_center_y = self.pixel_to_tile_center_pos(player_center)
+        current_row, current_col = self.player_tile()
         
-        # Get target tile's center position in sub-tile coordinates
-        target_center_x, target_center_y = self.tile_pos_to_center_pos((target_row, target_col))
-        
-        # Calculate direction to center
-        dx = target_center_x - curr_center_x
-        dy = target_center_y - curr_center_y
+        dr = target_row - current_row
+        dc = target_col - current_col
         
         # Prioritize vertical movement if both needed (Manhattan style)
-        if dy < 0:
+        if dr < 0:
             return 'UP'
-        elif dy > 0:
+        elif dr > 0:
             return 'DOWN'
-        elif dx < 0:
+        elif dc < 0:
             return 'LEFT'
-        elif dx > 0:
+        elif dc > 0:
             return 'RIGHT'
         else:
-            return None  # Already at target center
+            return None  # Already at target tile
 
     def recompute_path(self):
         """Recompute a normal A* path from the player's current tile.
@@ -175,24 +148,6 @@ class PlayerAI:
     def get_next_instruction(self):
         """Return the next direction for the player as an angle, or None if nothing to do."""
 
-        # Check if player is stuck (same position for multiple frames)
-        current_pos = (self.player.x, self.player.y)
-        if self.last_position == current_pos:
-            self.stuck_counter += 1
-            if self.stuck_counter >= self.stuck_threshold:
-                # Player is stuck, try opposite direction next time
-                if not self.try_opposite_side:
-                    self.try_opposite_side = True
-                    print(f"STUCK DETECTED! Trying opposite side...")
-        else:
-            # Player moved, reset stuck detection
-            if self.stuck_counter > 0:
-                print(f"Unstuck! Resetting...")
-            self.stuck_counter = 0
-            self.try_opposite_side = False
-        
-        self.last_position = current_pos
-
         # Position-based path following
         if not self.path or self.path_index >= len(self.path):
             # No path or reached end of path
@@ -202,14 +157,11 @@ class PlayerAI:
         
         # Get current target tile from path
         target_row, target_col = self.path[self.path_index]
+        current_row, current_col = self.player_tile()
         
-        # Check if we've reached the CENTER of the current waypoint (using 3x3 sub-grid)
-        player_center = self.player.get_rect().center
-        curr_center_pos = self.pixel_to_tile_center_pos(player_center)
-        target_center_pos = self.tile_pos_to_center_pos((target_row, target_col))
-        
-        if curr_center_pos == target_center_pos:
-            # Reached waypoint center, advance to next one
+        # Check if we've reached the current waypoint
+        if (current_row, current_col) == (target_row, target_col):
+            # Reached waypoint, advance to next one
             self.path_index += 1
             
             # Check if we've completed the entire path
@@ -223,8 +175,8 @@ class PlayerAI:
             # Get next target
             target_row, target_col = self.path[self.path_index]
         
-        # Calculate direction to current target tile CENTER
-        instr = self.get_direction_to_center(target_row, target_col)
+        # Calculate direction to current target tile
+        instr = self.get_direction_to_tile(target_row, target_col)
         
         if instr is None:
             # Shouldn't happen, but advance just in case
@@ -241,48 +193,37 @@ class PlayerAI:
         
         final_direction_angle = self.direction_a_star
         
-        # Only apply fuzzy logic if there are OBSTACLES (not just walls)
-        if len(obstacle_list) > 0:
+        # Only apply fuzzy logic if there are obstacles OR walls nearby
+        if len(obstacle_list) > 0 or len(wall_list) > 0:
             # Run fuzzy logic to get obstacle avoidance direction
             logique_direction, has_obstacle = self.run_logique_floue(perception)
             
             if has_obstacle:
-                # Check if fuzzy direction has stabilized
+                # Check if fuzzy direction has stabilized (similar to example code)
                 difference = abs(logique_direction - self.last_direction)
                 
                 # Normalize difference to 0-180 range
                 if difference > 180:
                     difference = 360 - difference
                 
-                # If fuzzy direction is stable (converged), use A* to make progress
-                # Otherwise use fuzzy to dodge the obstacle
-                if difference < 0.01:
+                # If fuzzy direction is stable (very small change from last direction)
+                if difference < 0.1:
+                    # Fuzzy has converged, use A* direction to make progress
                     final_direction_angle = self.direction_a_star
-                    self.fuzzy_use_counter = 0  # Reset counter when converged
                 else:
-                    # Fuzzy is still adjusting
-                    self.fuzzy_use_counter += 1
-                    
-                    # If fuzzy has been active too long without progress, force A* to push through
-                    if self.fuzzy_use_counter >= self.max_fuzzy_frames:
-                        final_direction_angle = self.direction_a_star
-                        self.fuzzy_use_counter = 0  # Reset counter
-                        print(f"Fuzzy oscillating too long! Forcing A* direction to push through obstacle.")
-                    else:
-                        final_direction_angle = logique_direction
+                    # Fuzzy is still adjusting, use its suggestion
+                    final_direction_angle = logique_direction
             else:
-                # No obstacles detected, use A* direction
+                # No obstacles detected by fuzzy, use A* direction
                 final_direction_angle = self.direction_a_star
-                self.fuzzy_use_counter = 0
         else:
-            # No obstacles, just follow A* path (collision system handles walls)
+            # No obstacles in perception, use A* direction
             final_direction_angle = self.direction_a_star
-            self.fuzzy_use_counter = 0
         
         # Update last direction
         self.last_direction = final_direction_angle
         
-        if len(obstacle_list) > 0:
+        if len(obstacle_list) > 0 or len(wall_list) > 0:
             print(f"A* dir: {instr}, Fuzzy: {logique_direction:.1f}°, Last: {self.last_direction:.1f}°, Obstacles: {len(obstacle_list)}, Final angle: {final_direction_angle:.1f}°")
         
         # Return the angle directly (not converted to cardinal direction)
