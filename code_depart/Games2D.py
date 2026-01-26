@@ -251,19 +251,21 @@ class App:
 
                     numparams = len(self.player.get_attributes())
                     popsize = 300
-                    nbits = 24
+                    nbits = 18
                     ga_sim = Genetic(numparams, popsize, nbits, self.player)
                     ga_sim.init_pop()
                     ga_sim.set_fit_fun(monster.mock_fight)
-                    numGenerations = 250
+                    numGenerations = 1000
                     mutationProb = 0.005
                     crossoverProb = 0.4
                     ga_sim.set_sim_parameters(numGenerations, mutationProb, crossoverProb)
-                    for i in range(ga_sim.num_generations):
+                    for _ in range(ga_sim.num_generations):
 
                         ga_sim.decode_individuals()
                         ga_sim.eval_fit()
-                        # ga_sim.print_progress()
+                        ga_sim.print_progress()
+                        if ga_sim.can_win():
+                            break
                         ga_sim.new_gen()
 
                     new_attr = ga_sim.get_best_individual()

@@ -30,6 +30,8 @@
 # Adapted by Audrey Corbeil Therrien for Artificial Intelligence module
 import numpy as np
 
+from Constants import MAX_ATTRIBUTE
+
 
 class Genetic:
     num_params = 0
@@ -37,7 +39,7 @@ class Genetic:
     nbits = 0
     population = []
 
-    def __init__(self, num_params, pop_size, nbits, player, min_attr_value=-1000, max_attr_value=1000):
+    def __init__(self, num_params, pop_size, nbits, player, min_attr_value=-MAX_ATTRIBUTE, max_attr_value=MAX_ATTRIBUTE):
         # Input:
         # - NUMPARAMS, the number of parameters to optimize.
         # - POPSIZE, the population size.
@@ -57,7 +59,7 @@ class Genetic:
         self.overallMaxFitnessRecord = np.zeros((self.num_generations,))
         self.avgMaxFitnessRecord = np.zeros((self.num_generations,))
         self.current_gen = 0
-        self.crossover_modulo = 32
+        self.crossover_modulo = 27
         self.player = player
         self.min_attr_value = min_attr_value
         self.max_attr_value = max_attr_value
@@ -304,6 +306,14 @@ class Genetic:
             self.population[-elite_count:] = elites
 
         self.current_gen += 1
+
+    def can_win(self):
+        # Returns True if the best individual can win 4 rounds
+        if self.current_gen == 0:
+            return False
+        self.player.set_attributes(self.get_best_individual())
+        rounds, _ = self.fit_fun(self.player)
+        return rounds > 3
 
 
 # Binary-Float conversion functions
