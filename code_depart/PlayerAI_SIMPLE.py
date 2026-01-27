@@ -9,6 +9,16 @@ from Constants import PERCEPTION_RADIUS
 # the related code when you no longer need this behaviour.
 ENABLE_CHAIN_TARGETS = True
 
+# HOMING mode: fine-tuned navigation to collect items (ported from PlayerAI_OLD)
+HOMING_ACTIVATION_DISTANCE = 60  # pixels (kept for parity; perception-gated in this AI)
+PRECISION_THRESHOLD = 8  # pixels - precision to consider we're "arrived" to the item
+
+# Pixel A* grid expansion: when an obstacle/wall is perceived, we can safely infer
+# the *rest of that tile* (outside the obstacle rect) is empty (since there is at most
+# one obstacle per tile). So we expand the grid to include whole tiles for perceived
+# blockers, even if parts of those tiles lie outside the perception square.
+PIXEL_ASTAR_INCLUDE_FULL_BLOCKER_TILES = True
+
 
 class PlayerAI:
     """Simple AI controller that uses A* to move the player automatically.
@@ -44,6 +54,38 @@ class PlayerAI:
         self.pixel_instructions = []  # List of angles to execute
         self.pixel_instruction_index = 0  # Current instruction index
 
+        # HOMING mode (ported from PlayerAI_OLD)
+        self.mode = 'PATH'  # 'PATH' or 'HOMING'
+        self.current_target = None  # pygame.Rect of the targeted item
+
+        # Dynamic tile blocking: if pixel A* cannot find a local path toward the next
+        # tile waypoint, temporarily mark that tile as blocked and recompute tile A*.
+        self.temp_blocked_tiles = {}  # (row, col) -> expires_at_ms
+
+    def _active_blocked_tiles(self):
+        """Return the set of currently-blocked tiles (prunes expired entries)."""
+        now = pygame.time.get_ticks()
+        expired = [tile for tile, expires_at in self.temp_blocked_tiles.items() if expires_at <= now]
+        for tile in expired:
+            self.temp_blocked_tiles.pop(tile, None)
+        return set(self.temp_blocked_tiles.keys())
+
+    def temporarily_block_tile(self, tile, duration_ms=2000, reason=None):
+        """Temporarily block a tile for the global tile A* planner."""
+        if tile is None:
+            return
+        if tile == self.player_tile():
+            return
+        now = pygame.time.get_ticks()
+        expires_at = now + int(duration_ms)
+        current = self.temp_blocked_tiles.get(tile)
+        if current is None or expires_at > current:
+            self.temp_blocked_tiles[tile] = expires_at
+        if reason:
+            print(f"Tile temporarily blocked {tile} ({reason})")
+        else:
+            print(f"Tile temporarily blocked {tile}")
+
     # ---------------- Pixel <-> tile conversions ----------------
 
     def player_tile(self):
@@ -51,6 +93,53 @@ class PlayerAI:
         row = int(self.player.y / self.maze.tile_size_y)
         col = int(self.player.x / self.maze.tile_size_x)
         return row, col
+
+    # ---------------- Item detection (HOMING) ----------------
+
+    def get_nearest_item_in_perception(self):
+        """Find nearest item (coin/treasure) inside the perception list.
+
+        Returns the pygame.Rect of the nearest item, or None.
+        """
+        perception = self.maze.make_perception_list(self.player, None)
+        item_list = perception[2]  # coins + treasures
+
+        if not item_list:
+            return None
+
+        player_cx, player_cy = self.player.get_rect().center
+
+        def distance_sq_to_item(item):
+            dx = item.centerx - player_cx
+            dy = item.centery - player_cy
+            return dx * dx + dy * dy
+
+        return min(item_list, key=distance_sq_to_item)
+
+    def compute_direction_to_target(self, target_rect):
+        """Compute a simple cardinal direction toward an item.
+
+        Returns:
+            'UP'|'DOWN'|'LEFT'|'RIGHT' or None if within PRECISION_THRESHOLD.
+        """
+        player_cx, player_cy = self.player.get_rect().center
+
+        dx = target_rect.centerx - player_cx
+        dy = target_rect.centery - player_cy
+
+        # Prioritize the dominant axis (Manhattan-ish) like PlayerAI_OLD.
+        if abs(dx) > PRECISION_THRESHOLD and abs(dx) >= abs(dy):
+            return 'RIGHT' if dx > 0 else 'LEFT'
+        elif abs(dy) > PRECISION_THRESHOLD:
+            return 'DOWN' if dy > 0 else 'UP'
+        else:
+            return None
+
+    def mark_tile_current_tile_completed(self):
+        """Mark the player's current tile as completed (HOMING parity helper)."""
+        row, col = self.player_tile()
+        print("current_tile marked as completed:", (row, col))
+        self.completed_targets.add((row, col))
 
     # ---------------- Path and instructions ----------------
 
@@ -85,7 +174,7 @@ class PlayerAI:
         """
         print("Recompute was called")
         start_tile = self.player_tile()
-        astar = A_star(self.maze.maze)
+        astar = A_star(self.maze.maze, blocked_tiles=self._active_blocked_tiles())
 
         if ENABLE_CHAIN_TARGETS and self.completed_targets:
             self.path = astar.find_path_from(start_tile, excluded_targets=self.completed_targets)
@@ -136,21 +225,45 @@ class PlayerAI:
         """Build perception grid and find pixel-level path.
         
         Returns:
-            tuple: (grid, start_pos, target_pos, perception_left, perception_top, CELL_SIZE)
+            tuple: (grid, start_pos, target_pos, perception_left, perception_top, CELL_SIZE, target_tile)
         """
         import math
         CELL_SIZE = 1  # 1 pixel per grid cell
 
-        # IMPORTANT: match Maze.make_perception_list exactly.
-        # pygame.Rect truncates its args to ints, so we build the same rect here
-        # and derive grid origin/size from it.
+        # IMPORTANT: match Maze.make_perception_list exactly for the perception rect.
+        # pygame.Rect truncates its args to ints.
         perception_distance = PERCEPTION_RADIUS * max(self.maze.tile_size_x, self.maze.tile_size_y)
         perception_left = self.player.x + 0.5 * (self.player.size_x - perception_distance)
         perception_top = self.player.y + 0.5 * (self.player.size_y - perception_distance)
         perception_rect = pygame.Rect(perception_left, perception_top, perception_distance, perception_distance)
 
-        grid_width = max(1, int(perception_rect.width // CELL_SIZE))
-        grid_height = max(1, int(perception_rect.height // CELL_SIZE))
+        # Blockers are still taken ONLY from perception.
+        perception = self.maze.make_perception_list(self.player, None)
+        all_blockers = perception[0] + perception[1]  # walls + obstacles
+
+        # Optionally expand the pixel grid to include full tiles that contain perceived blockers.
+        # This adds extra (known-empty) space in those tiles beyond the perception square.
+        expanded_rect = perception_rect
+        if PIXEL_ASTAR_INCLUDE_FULL_BLOCKER_TILES and all_blockers:
+            tile_rects = []
+            for blocker in all_blockers:
+                # Walls are aligned to tiles already; obstacles are random-positioned inside a tile.
+                cx, cy = blocker.center
+                tile_row = int(cy / self.maze.tile_size_y)
+                tile_col = int(cx / self.maze.tile_size_x)
+                tile_left = tile_col * self.maze.tile_size_x
+                tile_top = tile_row * self.maze.tile_size_y
+                tile_rects.append(pygame.Rect(tile_left, tile_top, self.maze.tile_size_x, self.maze.tile_size_y))
+
+            if tile_rects:
+                min_left = min([expanded_rect.left] + [r.left for r in tile_rects])
+                min_top = min([expanded_rect.top] + [r.top for r in tile_rects])
+                max_right = max([expanded_rect.right] + [r.right for r in tile_rects])
+                max_bottom = max([expanded_rect.bottom] + [r.bottom for r in tile_rects])
+                expanded_rect = pygame.Rect(min_left, min_top, max_right - min_left, max_bottom - min_top)
+
+        grid_width = max(1, int(expanded_rect.width // CELL_SIZE))
+        grid_height = max(1, int(expanded_rect.height // CELL_SIZE))
 
         # Create empty grid (all walkable initially)
         grid = [[True for _ in range(grid_width)] for _ in range(grid_height)]
@@ -158,14 +271,15 @@ class PlayerAI:
         player_rect = self.player.get_rect()
 
         def pix_to_col(pixel_x):
-            return int(math.floor((pixel_x - perception_rect.left) / CELL_SIZE))
+            return int(math.floor((pixel_x - expanded_rect.left) / CELL_SIZE))
 
         def pix_to_row(pixel_y):
-            return int(math.floor((pixel_y - perception_rect.top) / CELL_SIZE))
+            return int(math.floor((pixel_y - expanded_rect.top) / CELL_SIZE))
 
         def clamp_pixel_into_perception(pixel_x, pixel_y):
-            clamped_x = max(perception_rect.left, min(perception_rect.right - 1, int(pixel_x)))
-            clamped_y = max(perception_rect.top, min(perception_rect.bottom - 1, int(pixel_y)))
+            # Kept name for historical reasons; clamp into the expanded grid rect.
+            clamped_x = max(expanded_rect.left, min(expanded_rect.right - 1, int(pixel_x)))
+            clamped_y = max(expanded_rect.top, min(expanded_rect.bottom - 1, int(pixel_y)))
             return clamped_x, clamped_y
 
         def nearest_walkable(start, max_radius=12):
@@ -181,10 +295,6 @@ class PlayerAI:
                         if 0 <= rr < grid_height and 0 <= cc < grid_width and grid[rr][cc]:
                             return (rr, cc)
             return None
-
-        perception = self.maze.make_perception_list(self.player, None)
-        # Combine walls and obstacles
-        all_blockers = perception[0] + perception[1]  # walls + obstacles
 
         for blocker in all_blockers:
             # Inflate the blocker by the player's collision rect size.
@@ -264,29 +374,55 @@ class PlayerAI:
         else:
             step_col = 1
 
-        # Start from the far edge in the intended direction and scan inward until we find a
-        # walkable cell on the same "ray" (same row/col) as the player.
+        # Prefer: farthest walkable cell in the intended direction (anywhere on the forward edge).
+        # Fallback: if the forward edge is fully blocked, use the farthest walkable cell on the
+        # player's aligned ray (same row/col) in that direction.
         start_r, start_c = start_pos
-        if step_row == 1:  # down
-            edge_candidate = (grid_height - 1, start_c)
-            scan_positions = ((r, start_c) for r in range(grid_height - 1, -1, -1))
-        elif step_row == -1:  # up
-            edge_candidate = (0, start_c)
-            scan_positions = ((r, start_c) for r in range(0, grid_height))
-        elif step_col == 1:  # right
-            edge_candidate = (start_r, grid_width - 1)
-            scan_positions = ((start_r, c) for c in range(grid_width - 1, -1, -1))
-        else:  # left
-            edge_candidate = (start_r, 0)
-            scan_positions = ((start_r, c) for c in range(0, grid_width))
 
         target_pos = None
-        for rr, cc in scan_positions:
-            if grid[rr][cc]:
-                target_pos = (rr, cc)
-                break
 
-        # If the entire ray is blocked, fall back to the closest walkable around the edge.
+        if step_row == 1:  # down
+            edge_row = grid_height - 1
+            edge_walkables = [(edge_row, c) for c in range(grid_width) if grid[edge_row][c]]
+            if edge_walkables:
+                target_pos = min(edge_walkables, key=lambda rc: abs(rc[1] - start_c))
+
+            edge_candidate = (edge_row, start_c)
+            scan_positions = ((r, start_c) for r in range(grid_height - 1, -1, -1))
+        elif step_row == -1:  # up
+            edge_row = 0
+            edge_walkables = [(edge_row, c) for c in range(grid_width) if grid[edge_row][c]]
+            if edge_walkables:
+                target_pos = min(edge_walkables, key=lambda rc: abs(rc[1] - start_c))
+
+            edge_candidate = (edge_row, start_c)
+            scan_positions = ((r, start_c) for r in range(0, grid_height))
+        elif step_col == 1:  # right
+            edge_col = grid_width - 1
+            edge_walkables = [(r, edge_col) for r in range(grid_height) if grid[r][edge_col]]
+            if edge_walkables:
+                target_pos = min(edge_walkables, key=lambda rc: abs(rc[0] - start_r))
+
+            edge_candidate = (start_r, edge_col)
+            scan_positions = ((start_r, c) for c in range(grid_width - 1, -1, -1))
+        else:  # left
+            edge_col = 0
+            edge_walkables = [(r, edge_col) for r in range(grid_height) if grid[r][edge_col]]
+            if edge_walkables:
+                target_pos = min(edge_walkables, key=lambda rc: abs(rc[0] - start_r))
+
+            edge_candidate = (start_r, edge_col)
+            scan_positions = ((start_r, c) for c in range(0, grid_width))
+
+        # Fallback requested: if nothing walkable exists on the forward edge, use the farthest
+        # walkable cell on the aligned ray.
+        if target_pos is None:
+            for rr, cc in scan_positions:
+                if grid[rr][cc]:
+                    target_pos = (rr, cc)
+                    break
+
+        # Final fallback: if even the whole ray is blocked, find the closest walkable near the edge.
         if target_pos is None:
             target_pos = nearest_walkable(edge_candidate, max_radius=64)
             if target_pos is None:
@@ -294,8 +430,8 @@ class PlayerAI:
                 return None
 
         # Convert the chosen grid target back to a representative pixel (for debug only).
-        target_pixel_x = perception_rect.left + target_pos[1] * CELL_SIZE
-        target_pixel_y = perception_rect.top + target_pos[0] * CELL_SIZE
+        target_pixel_x = expanded_rect.left + target_pos[1] * CELL_SIZE
+        target_pixel_y = expanded_rect.top + target_pos[0] * CELL_SIZE
         
         # DEBUG: Print positions
         current_tile = self.player_tile()
@@ -309,7 +445,7 @@ class PlayerAI:
         print(f"  Grid walkable at start: {grid[start_pos[0]][start_pos[1]]}")
         print(f"  Grid walkable at target: {grid[target_pos[0]][target_pos[1]]}")
         
-        return (grid, start_pos, target_pos, perception_rect.left, perception_rect.top, CELL_SIZE)
+        return (grid, start_pos, target_pos, expanded_rect.left, expanded_rect.top, CELL_SIZE, target_tile)
 
     def clamp_to_grid_edge(self, target_row, target_col, grid_height, grid_width):
         """Clamp target position to nearest grid edge if outside bounds.
@@ -444,7 +580,7 @@ class PlayerAI:
             result = self.make_perception_grid()
             if result is None:
                 return False
-            grid, start_pos, target_pos, perception_left, perception_top, CELL_SIZE = result
+            grid, start_pos, target_pos, perception_left, perception_top, CELL_SIZE, target_tile = result
             pixel_path = self.find_pixel_path(grid, start_pos, target_pos)
             
             if pixel_path:
@@ -459,7 +595,9 @@ class PlayerAI:
                 else:
                     print("Pixel A*: No instructions generated from path")
             else:
-                print("Pixel A*: No path found, falling back to fuzzy logic")
+                print("Pixel A*: No path found, marking tile blocked and recomputing global A*")
+                self.temporarily_block_tile(target_tile, duration_ms=2000, reason="pixel A* no-path")
+                self.recompute_path()
         except Exception as e:
             print(f"Pixel A* activation failed: {e}")
         
@@ -509,6 +647,68 @@ class PlayerAI:
                 self.pixel_instructions = []
                 self.pixel_instruction_index = 0
                 # Fall through to normal navigation
+
+        # HOMING mode: fine navigation to collect nearby items
+        if self.mode == 'HOMING':
+            target = self.get_nearest_item_in_perception()
+
+            if target is None:
+                # No item visible anymore, return to PATH
+                print("No target found, switching to PATH")
+                self.mode = 'PATH'
+                self.current_target = None
+                self.mark_tile_current_tile_completed()
+                self.recompute_path()
+                return None
+
+            intended_direction = self.compute_direction_to_target(target)
+
+            if intended_direction is None:
+                # Close enough to the item, return to PATH
+                print("Arrived at target, switching to PATH")
+                self.mode = 'PATH'
+                self.current_target = None
+                self.mark_tile_current_tile_completed()
+                self.recompute_path()
+                return None
+
+            # In this AI, everything downstream expects angles.
+            self.direction_a_star = self.direction_to_angle(intended_direction)
+
+            # Reuse the same obstacle handling as PATH mode.
+            perception = self.maze.make_perception_list(self.player, None)
+            obstacle_list = perception[1]
+            wall_list = perception[0]
+
+            final_direction_angle = self.direction_a_star
+
+            # Match PATH-mode obstacle handling: trust fuzzy output when something is in perception.
+            if len(obstacle_list) > 0 or len(wall_list) > 0:
+                logique_direction, has_obstacle = self.run_logique_floue(perception)
+                final_direction_angle = logique_direction
+                self.fuzzy_use_counter += 1
+
+                # Safety: if fuzzy takes too long, force A* to push through
+                if self.fuzzy_use_counter >= self.max_fuzzy_frames:
+                    print("Fuzzy taking too long (HOMING), forcing A* push")
+                    final_direction_angle = self.direction_a_star
+                    self.fuzzy_use_counter = 0
+            else:
+                final_direction_angle = self.direction_a_star
+                self.fuzzy_use_counter = 0
+
+            self.last_direction = final_direction_angle
+            return final_direction_angle
+
+        # PATH mode: optionally switch to HOMING when near the end of the path
+        if self.path and len(self.path) > 0:
+            current_tile = self.player_tile()
+            if current_tile == self.path[-1] or (len(self.path) >= 2 and current_tile == self.path[-2]):
+                nearest_item = self.get_nearest_item_in_perception()
+                if nearest_item:
+                    self.mode = 'HOMING'
+                    self.current_target = nearest_item
+                    return self.get_next_instruction()
 
         # Position-based path following
         if not self.path or self.path_index >= len(self.path):

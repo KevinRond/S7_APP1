@@ -14,13 +14,16 @@ NEAREST_TARGETS = 3
 
 
 class A_star:
-    def __init__(self, maze_grid):
+    def __init__(self, maze_grid, blocked_tiles=None):
         self.grid = maze_grid
         self.rows = len(maze_grid)
         self.cols = len(maze_grid[0])
+        self.blocked_tiles = set(blocked_tiles) if blocked_tiles else set()
 
     def is_walkable(self, i, j):
         if i < 0 or j < 0 or i >= self.rows or j >= self.cols:
+            return False
+        if (i, j) in self.blocked_tiles:
             return False
         cell = self.grid[i][j]
         # On bloque seulement les murs.
