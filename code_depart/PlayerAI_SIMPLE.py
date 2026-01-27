@@ -561,68 +561,7 @@ class PlayerAI:
             # Run fuzzy logic to get obstacle avoidance direction
             logique_direction, has_obstacle = self.run_logique_floue(perception)
             
-            # Check if fuzzy is turning into a blocked side (when obstacles present)
-            if has_obstacle and len(obstacle_list) > 0:
-                # Calculate clearance on both sides
-                player_pos = self.player.get_rect().center
-                player_width = self.player.size_x
-                player_height = self.player.size_y
-                
-                # Determine min clearance needed
-                if 45 <= self.last_direction < 135 or 225 <= self.last_direction < 315:
-                    min_clearance = player_width * 1.5
-                else:
-                    min_clearance = player_height * 1.5
-                
-                left_clearance = float('inf')
-                right_clearance = float('inf')
-                
-                # Check all obstacles and walls
-                all_blockers = obstacle_list + wall_list
-                for blocker in all_blockers:
-                    dx = blocker.center[0] - player_pos[0]
-                    dy = -(blocker.center[1] - player_pos[1])
-                    
-                    angle_to_blocker = np.degrees(np.arctan2(dy, dx))
-                    if angle_to_blocker < 0:
-                        angle_to_blocker += 360
-                    
-                    rel_angle = self.last_direction - angle_to_blocker
-                    if rel_angle < -180:
-                        rel_angle += 360
-                    if rel_angle > 180:
-                        rel_angle -= 360
-                    
-                    distance = np.sqrt(dx**2 + dy**2)
-                    
-                    if 0 < rel_angle < 90:
-                        right_clearance = min(right_clearance, distance)
-                    elif -90 < rel_angle < 0:
-                        left_clearance = min(left_clearance, distance)
-                
-                # Determine which direction fuzzy is turning
-                fuzzy_turn = logique_direction - self.last_direction
-                if fuzzy_turn > 180:
-                    fuzzy_turn -= 360
-                if fuzzy_turn < -180:
-                    fuzzy_turn += 360
-                
-                # If fuzzy turning left but left is blocked and right is clear, override
-                if fuzzy_turn > 10 and left_clearance < min_clearance and right_clearance >= min_clearance:
-                    print(f"Override: Fuzzy wants LEFT but blocked (L:{left_clearance:.1f} R:{right_clearance:.1f}), forcing RIGHT")
-                    print("Making it go right then")
-                    logique_direction = self.direction_a_star - 30
-                    if logique_direction < 0:
-                        logique_direction += 360
-                # If fuzzy turning right but right is blocked and left is clear, override
-                elif fuzzy_turn < -10 and right_clearance < min_clearance and left_clearance >= min_clearance:
-                   
-                    print(f"Override: Fuzzy wants RIGHT but blocked (L:{left_clearance:.1f} R:{right_clearance:.1f}), forcing LEFT")
-                    print("Making it go left then")
-                    logique_direction = self.direction_a_star + 30
-                    if logique_direction >= 360:
-                        logique_direction -= 360
-            
+            # Trust fuzzy logic completely - no overrides
             final_direction_angle = logique_direction
             self.fuzzy_use_counter += 1
             
