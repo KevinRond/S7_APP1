@@ -111,6 +111,14 @@ class PixelAstar:
         start_row = pix_to_row(player_center_y)
         start_pos = (start_row, start_col)
 
+        # If we're touching an inflated blocker, the exact center cell can be blocked.
+        # Don't blindly force it open; instead, snap to the nearest walkable cell.
+        snapped_start = nearest_walkable(start_pos)
+        if snapped_start is None:
+            print("Pixel A*: No walkable start cell in local perception grid")
+            return None
+        start_pos = snapped_start
+
         # Find the next tile to target - should be adjacent to current tile
         # Use center-based tile for consistency with pixel grid.
         current_tile = (int(player_center_y / self.maze.tile_size_y), int(player_center_x / self.maze.tile_size_x))
