@@ -2,6 +2,8 @@ import pygame
 from A_star import A_star
 from FuzzyObstacleController import LogiqueFlou
 from Constants import PERCEPTION_RADIUS
+import numpy as np
+
 
 
 # Test-only option: when enabled, the AI will chain through
@@ -49,6 +51,11 @@ class PlayerAI:
         self.fuzzy_use_counter = 0  # Count frames using fuzzy direction
         self.max_fuzzy_frames = 20  # Max frames before forcing A* to push through
         
+        # Stuck detection (position-based)
+        self.position_history = []  # Recent positions (pixel coords)
+        self.stuck_check_interval = 10  # Check every N frames
+        self.stuck_distance_threshold = 5.0  # pixels - if moved less than this, considered stuck
+        
         # Pixel A* avoidance mode
         self.pixel_astar_mode = False  # Whether we're in pixel A* mode
         self.pixel_instructions = []  # List of angles to execute
@@ -93,6 +100,35 @@ class PlayerAI:
         row = int(self.player.y / self.maze.tile_size_y)
         col = int(self.player.x / self.maze.tile_size_x)
         return row, col
+    
+    def is_player_stuck(self):
+        """Check if player is stationary (not making progress).
+        
+        Returns:
+            True if player hasn't moved significantly in recent frames, False otherwise.
+        """
+        # Get current position
+        current_pos = (self.player.x, self.player.y)
+        
+        # Add to history
+        self.position_history.append(current_pos)
+        
+        # Keep only recent positions (last stuck_check_interval frames)
+        if len(self.position_history) > self.stuck_check_interval:
+            self.position_history.pop(0)
+        
+        # Need enough history to check
+        if len(self.position_history) < self.stuck_check_interval:
+            return False
+        
+        # Calculate distance moved from oldest to newest position
+        old_pos = self.position_history[0]
+        dx = current_pos[0] - old_pos[0]
+        dy = current_pos[1] - old_pos[1]
+        distance_moved = (dx * dx + dy * dy) ** 0.5
+        
+        # If moved less than threshold, consider stuck
+        return distance_moved < self.stuck_distance_threshold
 
     # ---------------- Item detection (HOMING) ----------------
 
@@ -749,7 +785,6 @@ class PlayerAI:
         self.direction_a_star = self.direction_to_angle(instr)
         
         # Check for obstacles and run fuzzy logic if needed
-        import numpy as np
         perception = self.maze.make_perception_list(self.player, None)
         obstacle_list = perception[1]  # obstacles
         wall_list = perception[0]  # walls
@@ -763,13 +798,25 @@ class PlayerAI:
             
             # Trust fuzzy logic completely - no overrides
             final_direction_angle = logique_direction
+
             self.fuzzy_use_counter += 1
             
-            # Safety: if fuzzy takes too long, force A* to push through
+            # Safety: if fuzzy takes too long, check if we're actually stuck
             if self.fuzzy_use_counter >= self.max_fuzzy_frames:
-                print(f"Fuzzy taking too long, forcing A* push")
                 final_direction_angle = self.direction_a_star
                 self.fuzzy_use_counter = 0
+
+                if self.is_player_stuck():
+                    # Truly stuck (not moving) - recompute path to find alternate route
+                    print(f"Player stuck (stationary for {self.stuck_check_interval} frames), recomputing path")
+                    self.recompute_path()
+                
+                else:
+                    # Still moving - just force A* direction without recomputing
+                    # This prevents path oscillation while maintaining progress
+                    print(f"Fuzzy timeout but still moving, forcing A* push (no recompute)")
+                    final_direction_angle = self.direction_a_star
+                    self.fuzzy_use_counter = 0  # Reset counter to allow fuzzy to try again
         else:
             # No obstacles, just follow A* path (collision system handles walls)
             final_direction_angle = self.direction_a_star
