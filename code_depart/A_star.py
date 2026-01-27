@@ -4,7 +4,6 @@ from Constants import START, EXIT, COIN, TREASURE, OBSTACLE, MONSTER, DOOR
 
 
 # Liste des types d'objets que l'on peut cibler avec A*.
-# Tu peux facilement modifier cette constante (ajouter/enlever un type).
 TARGET_TILES = [EXIT, COIN, TREASURE]
 
 # If True, the EXIT is only targeted when there are no other targets
