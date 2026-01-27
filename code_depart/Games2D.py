@@ -141,35 +141,45 @@ class App:
 
     def move_player_right(self):
         self.player.moveRight()
-        if self.on_coin_collision() or self.on_treasure_collision():
-            print("COLLIDED WITH ITEM")
-            self.playerAI.recompute_path()
+        to_activate_pixel_astar = self.on_obstacle_collision() and (not self.playerAI.pixel_astar_mode)
         if self.on_collision():
             self.player.moveLeft()
+            if to_activate_pixel_astar:
+                self.playerAI.activate_pixel_astar_mode()
+            
 
     def move_player_left(self):
         self.player.moveLeft()
+        to_activate_pixel_astar = self.on_obstacle_collision() and (not self.playerAI.pixel_astar_mode)
         if self.on_coin_collision() or self.on_treasure_collision():
             print("COLLIDED WITH ITEM")
             self.playerAI.recompute_path()
         if self.on_collision():
             self.player.moveRight()
+            if to_activate_pixel_astar:
+                self.playerAI.activate_pixel_astar_mode()
 
     def move_player_up(self):
         self.player.moveUp()
+        to_activate_pixel_astar = self.on_obstacle_collision() and (not self.playerAI.pixel_astar_mode)
         if self.on_coin_collision() or self.on_treasure_collision():
             print("COLLIDED WITH ITEM")
             self.playerAI.recompute_path()
         if self.on_collision():
             self.player.moveDown()
+            if to_activate_pixel_astar:
+                self.playerAI.activate_pixel_astar_mode()
 
     def move_player_down(self):
         self.player.moveDown()
+        to_activate_pixel_astar = self.on_obstacle_collision() and (not self.playerAI.pixel_astar_mode)
         if self.on_coin_collision() or self.on_treasure_collision():
             print("COLLIDED WITH ITEM")
             self.playerAI.recompute_path()
         if self.on_collision():
             self.player.moveUp()
+            if to_activate_pixel_astar:
+                self.playerAI.activate_pixel_astar_mode()
 
     def on_wall_collision(self):
         collide_index = self.player.get_rect().collidelist(self.maze.wallList)
@@ -181,7 +191,6 @@ class App:
     def on_obstacle_collision(self):
         collide_index = self.player.get_rect().collidelist(self.maze.obstacleList)
         if not collide_index == -1:
-            # print("Collision Detected!")
             return True
         return False
 
@@ -299,6 +308,7 @@ class App:
 
         while self._running:
             self._clock.tick(GAME_CLOCK)
+            self.maze.make_perception_list(self.player, self._display_surf)
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self._running = False
