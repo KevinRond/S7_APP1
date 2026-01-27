@@ -5,7 +5,7 @@ from Constants import START, EXIT, COIN, TREASURE, OBSTACLE, MONSTER, DOOR
 
 # Liste des types d'objets que l'on peut cibler avec A*.
 # Tu peux facilement modifier cette constante (ajouter/enlever un type).
-TARGET_TILES = [COIN, TREASURE, EXIT]
+TARGET_TILES = [EXIT]
 
 # Nombre de cibles les plus proches (en distance de Manhattan) pour
 # lesquelles on calcule un vrai chemin A* avant de choisir la meilleure.

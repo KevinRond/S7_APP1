@@ -22,11 +22,11 @@ def createFuzzyControllerObstacle():
         obj['droite_completement'] = fuzz.trapmf(obj.universe, [38, 80, 90, 90])
         obj['centre'] = fuzz.trimf(obj.universe, [-32, 0, 32])
 
-    obs_dist['proche'] = fuzz.trapmf(obs_dist.universe, [0, 0, 35, 45])
-    obs_dist['loin'] = fuzz.trapmf(obs_dist.universe, [35, 45, 80, 80])
+    obs_dist['proche'] = fuzz.trapmf(obs_dist.universe, [0, 0, 10, 20])
+    obs_dist['loin'] = fuzz.trapmf(obs_dist.universe, [15, 25, 80, 80])
 
-    mur_dist['proche'] = fuzz.trapmf(mur_dist.universe, [0, 0, 35, 50])
-    mur_dist['loin'] = fuzz.trapmf(mur_dist.universe, [35, 50, 80, 80])
+    mur_dist['proche'] = fuzz.trapmf(mur_dist.universe, [0, 0, 30, 40])
+    mur_dist['loin'] = fuzz.trapmf(mur_dist.universe, [35, 45, 80, 80])
 
     action['gauche'] = fuzz.trapmf(action.universe, [-90, -90, -60, 0])
     action['droite'] = fuzz.trapmf(action.universe, [0, 60, 90, 90])
@@ -34,18 +34,42 @@ def createFuzzyControllerObstacle():
 
     rules = []
 
-    # Obstacles
-    rules.append(ctrl.Rule(antecedent=(obs_angl['droite'] | mur_angl['droite'] | obs_angl['centre'] | mur_angl['centre']),
-                consequent=action['gauche']))
+    # IMPROVED RULES: Check distance before turning toward a side
+    
+    # If obstacle/wall on RIGHT and close, only turn LEFT if we're not also blocked on left
+    # Turn left when right side is blocked and we have room on left
+    rules.append(ctrl.Rule(
+        antecedent=((obs_angl['droite'] | obs_angl['centre']) & obs_dist['proche']),
+        consequent=action['gauche']
+    ))
+    
+    rules.append(ctrl.Rule(
+        antecedent=((mur_angl['droite'] | mur_angl['centre']) & mur_dist['proche']),
+        consequent=action['gauche']
+    ))
 
-    rules.append(ctrl.Rule(antecedent=(obs_angl['gauche'] | mur_angl['gauche']),
-                consequent=action['droite']))
+    # If obstacle/wall on LEFT and close, turn RIGHT
+    rules.append(ctrl.Rule(
+        antecedent=(obs_angl['gauche'] & obs_dist['proche']),
+        consequent=action['droite']
+    ))
+    
+    rules.append(ctrl.Rule(
+        antecedent=(mur_angl['gauche'] & mur_dist['proche']),
+        consequent=action['droite']
+    ))
 
-    rules.append(ctrl.Rule(antecedent=((obs_angl['droite_completement'] | obs_angl['gauche_completement']) & obs_dist['loin']),
-                consequent=action['tout_droit']))
+    # If obstacle is far to the side, go straight
+    rules.append(ctrl.Rule(
+        antecedent=((obs_angl['droite_completement'] | obs_angl['gauche_completement']) & obs_dist['loin']),
+        consequent=action['tout_droit']
+    ))
 
-    rules.append(ctrl.Rule(antecedent=((mur_angl['droite_completement'] | mur_angl['gauche_completement']) | mur_dist['loin']),
-                consequent=action['tout_droit']))
+    # If wall is far or way to the side, go straight
+    rules.append(ctrl.Rule(
+        antecedent=((mur_angl['droite_completement'] | mur_angl['gauche_completement']) | mur_dist['loin']),
+        consequent=action['tout_droit']
+    ))
     
     # Conjunction (and_func) and disjunction (or_func) methods for rules:
     for rule in rules:

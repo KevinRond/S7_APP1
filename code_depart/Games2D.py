@@ -249,6 +249,17 @@ class App:
         for treasure in self.maze.treasureList:
             pygame.draw.rect(self._display_surf, (255, 165, 0), treasure, 2)
         
+        # Draw direction indicator (CYAN line from player center)
+        import math
+        player_center = self.player.get_rect().center
+        direction_length = 40  # pixels
+        direction_angle = self.playerAI.last_direction
+        # Convert angle to radians (0° = right, 90° = up in our system)
+        angle_rad = math.radians(direction_angle)
+        end_x = player_center[0] + direction_length * math.cos(angle_rad)
+        end_y = player_center[1] - direction_length * math.sin(angle_rad)  # minus because screen Y is inverted
+        pygame.draw.line(self._display_surf, (0, 255, 255), player_center, (int(end_x), int(end_y)), 3)
+        
         # Optional: Draw perception radius (BLUE - semi-transparent)
         # Uncomment to see perception area
         # perception_distance = PERCEPTION_RADIUS * max(self.maze.tile_size_x, self.maze.tile_size_y)

@@ -123,84 +123,6 @@ class PlayerAI:
         else:  # 225 <= angle < 315
             return 'DOWN'
 
-    def check_side_clearance(self, perception):
-        """Analyze which side (left or right) has more space to pass.
-        
-        Returns:
-            'left', 'right', or None if both sides seem equally viable
-        """
-        import numpy as np
-        
-        wall_list = perception[0]
-        obstacle_list = perception[1]
-        
-        # Combine walls and obstacles for gap analysis
-        all_obstacles = wall_list + obstacle_list
-        
-        if len(all_obstacles) == 0:
-            return None
-        
-        # Get current direction
-        current_direction = self.last_direction
-        
-        # Check distance to nearest obstacle on each side
-        left_min_dist = float('inf')
-        right_min_dist = float('inf')
-        
-        player_pos = self.player.get_rect().center
-        
-        for obs in all_obstacles:
-            obs_pos = obs.center
-            
-            # Calculate angle to obstacle
-            dx = obs_pos[0] - player_pos[0]
-            dy = -(obs_pos[1] - player_pos[1])  # Invert Y for screen coords
-            
-            angle_to_obs = np.degrees(np.arctan2(dy, dx))
-            if angle_to_obs < 0:
-                angle_to_obs += 360
-            
-            # Get relative angle
-            rel_angle = current_direction - angle_to_obs
-            if rel_angle < -180:
-                rel_angle += 360
-            if rel_angle > 180:
-                rel_angle -= 360
-            
-            # Calculate distance
-            distance = np.sqrt(dx**2 + dy**2)
-            
-            # Check if obstacle is on left side (relative angle -90 to -10)
-            if -90 < rel_angle < -10:
-                left_min_dist = min(left_min_dist, distance)
-            # Check if obstacle is on right side (relative angle 10 to 90)
-            elif 10 < rel_angle < 90:
-                right_min_dist = min(right_min_dist, distance)
-        
-        # Prefer the side with more clearance
-        # If one side is blocked (< 30 pixels) and the other is clear (> 30), prefer the clear side
-        if left_min_dist < 30 and right_min_dist >= 30:
-            return 'right'
-        elif right_min_dist < 30 and left_min_dist >= 30:
-            return 'left'
-        
-        # If both sides are similar, prefer the side that aligns with A* goal
-        # Check if A* direction is left or right of current direction
-        a_star_relative = self.direction_a_star - current_direction
-        if a_star_relative < -180:
-            a_star_relative += 360
-        if a_star_relative > 180:
-            a_star_relative -= 360
-        
-        # If goal is to the left, prefer left; if to the right, prefer right
-        if abs(left_min_dist - right_min_dist) < 20:  # Both sides similar clearance
-            if a_star_relative < -5:
-                return 'left'
-            elif a_star_relative > 5:
-                return 'right'
-        
-        return None
-
     def run_logique_floue(self, perception):
         """Run fuzzy logic controller to get obstacle avoidance direction.
         
@@ -269,65 +191,86 @@ class PlayerAI:
         self.direction_a_star = self.direction_to_angle(instr)
         
         # Check for obstacles and run fuzzy logic if needed
+        import numpy as np
         perception = self.maze.make_perception_list(self.player, None)
         obstacle_list = perception[1]  # obstacles
         wall_list = perception[0]  # walls
         
         final_direction_angle = self.direction_a_star
-        
+
         # Apply fuzzy logic if there are OBSTACLES or nearby WALLS
         if len(obstacle_list) > 0 or len(wall_list) > 0:
-            # Check which side has clearance
-            preferred_side = self.check_side_clearance(perception)
-            
             # Run fuzzy logic to get obstacle avoidance direction
             logique_direction, has_obstacle = self.run_logique_floue(perception)
             
-            if has_obstacle:
-                # Determine which side fuzzy is suggesting
-                fuzzy_relative = logique_direction - self.direction_a_star
-                if fuzzy_relative < -180:
-                    fuzzy_relative += 360
-                if fuzzy_relative > 180:
-                    fuzzy_relative -= 360
+            # Check if fuzzy is turning into a blocked side (when obstacles present)
+            if has_obstacle and len(obstacle_list) > 0:
+                # Calculate clearance on both sides
+                player_pos = self.player.get_rect().center
+                player_width = self.player.size_x
+                player_height = self.player.size_y
                 
-                fuzzy_suggests_left = fuzzy_relative < -5
-                fuzzy_suggests_right = fuzzy_relative > 5
-                
-                # If fuzzy suggests a blocked side, override it
-                if preferred_side == 'left' and fuzzy_suggests_right:
-                    # Force left side
-                    logique_direction = (self.direction_a_star + 45) % 360
-                    print(f"Right side blocked! Forcing LEFT: {logique_direction:.1f}°")
-                elif preferred_side == 'right' and fuzzy_suggests_left:
-                    # Force right side
-                    logique_direction = (self.direction_a_star - 45) % 360
-                    print(f"Left side blocked! Forcing RIGHT: {logique_direction:.1f}°")
-                
-                # Check if fuzzy direction has stabilized
-                difference = abs(logique_direction - self.last_direction)
-                
-                # Normalize difference to 0-180 range
-                if difference > 180:
-                    difference = 360 - difference
-                
-                # If fuzzy direction is stable (converged), use A* to make progress
-                if difference < 0.01:
-                    final_direction_angle = self.direction_a_star
-                    self.fuzzy_use_counter = 0
+                # Determine min clearance needed
+                if 45 <= self.last_direction < 135 or 225 <= self.last_direction < 315:
+                    min_clearance = player_width * 1.5
                 else:
-                    # Fuzzy is still adjusting
-                    self.fuzzy_use_counter += 1
+                    min_clearance = player_height * 1.5
+                
+                left_clearance = float('inf')
+                right_clearance = float('inf')
+                
+                # Check all obstacles and walls
+                all_blockers = obstacle_list + wall_list
+                for blocker in all_blockers:
+                    dx = blocker.center[0] - player_pos[0]
+                    dy = -(blocker.center[1] - player_pos[1])
                     
-                    # If fuzzy has been active too long, force A* to push through
-                    if self.fuzzy_use_counter >= self.max_fuzzy_frames:
-                        final_direction_angle = self.direction_a_star
-                        self.fuzzy_use_counter = 0
-                        print(f"Fuzzy oscillating too long! Forcing A* to push through.")
-                    else:
-                        final_direction_angle = logique_direction
-            else:
-                # No obstacles detected, use A* direction
+                    angle_to_blocker = np.degrees(np.arctan2(dy, dx))
+                    if angle_to_blocker < 0:
+                        angle_to_blocker += 360
+                    
+                    rel_angle = self.last_direction - angle_to_blocker
+                    if rel_angle < -180:
+                        rel_angle += 360
+                    if rel_angle > 180:
+                        rel_angle -= 360
+                    
+                    distance = np.sqrt(dx**2 + dy**2)
+                    
+                    if 0 < rel_angle < 90:
+                        right_clearance = min(right_clearance, distance)
+                    elif -90 < rel_angle < 0:
+                        left_clearance = min(left_clearance, distance)
+                
+                # Determine which direction fuzzy is turning
+                fuzzy_turn = logique_direction - self.last_direction
+                if fuzzy_turn > 180:
+                    fuzzy_turn -= 360
+                if fuzzy_turn < -180:
+                    fuzzy_turn += 360
+                
+                # If fuzzy turning left but left is blocked and right is clear, override
+                if fuzzy_turn > 10 and left_clearance < min_clearance and right_clearance >= min_clearance:
+                    print(f"Override: Fuzzy wants LEFT but blocked (L:{left_clearance:.1f} R:{right_clearance:.1f}), forcing RIGHT")
+                    print("Making it go right then")
+                    logique_direction = self.direction_a_star - 30
+                    if logique_direction < 0:
+                        logique_direction += 360
+                # If fuzzy turning right but right is blocked and left is clear, override
+                elif fuzzy_turn < -10 and right_clearance < min_clearance and left_clearance >= min_clearance:
+                   
+                    print(f"Override: Fuzzy wants RIGHT but blocked (L:{left_clearance:.1f} R:{right_clearance:.1f}), forcing LEFT")
+                    print("Making it go left then")
+                    logique_direction = self.direction_a_star + 30
+                    if logique_direction >= 360:
+                        logique_direction -= 360
+            
+            final_direction_angle = logique_direction
+            self.fuzzy_use_counter += 1
+            
+            # Safety: if fuzzy takes too long, force A* to push through
+            if self.fuzzy_use_counter >= self.max_fuzzy_frames:
+                print(f"Fuzzy taking too long, forcing A* push")
                 final_direction_angle = self.direction_a_star
                 self.fuzzy_use_counter = 0
         else:
@@ -339,8 +282,7 @@ class PlayerAI:
         self.last_direction = final_direction_angle
         
         if len(obstacle_list) > 0 or len(wall_list) > 0:
-            side_info = f", Preferred: {preferred_side}" if preferred_side else ""
-            print(f"A* dir: {instr}, Fuzzy: {logique_direction:.1f}°, Last: {self.last_direction:.1f}°, Obstacles: {len(obstacle_list)}, Walls: {len(wall_list)}{side_info}, Final: {final_direction_angle:.1f}°")
+            print(f"A* dir: {instr}, Fuzzy: {logique_direction:.1f}°, Last: {self.last_direction:.1f}°, Obstacles: {len(obstacle_list)}, Walls: {len(wall_list)}, Final: {final_direction_angle:.1f}°")
         
         # Return the angle directly (not converted to cardinal direction)
         return final_direction_angle
