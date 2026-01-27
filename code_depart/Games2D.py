@@ -6,6 +6,7 @@ from Maze import *
 from Constants import *
 from Sys_Expert import Systeme_Expert
 from PlayerAI_SIMPLE import PlayerAI
+from Genetic import Genetic
 
 
 class App:
@@ -316,7 +317,7 @@ class App:
                     self.timer += 0.01
             pygame.event.pump()
             keys = pygame.key.get_pressed()
-            #self.on_keyboard_input(keys)
+            # self.on_keyboard_input(keys)
             instruction = self.playerAI.get_next_instruction()
             if instruction is not None:
                 self.on_AI_input(instruction)
@@ -330,7 +331,34 @@ class App:
 
             monster = self.on_monster_collision()
             if monster:
+                notComputed = True
+                while (notComputed):
+
+                    numparams = len(self.player.get_attributes())
+                    popsize = 300
+                    nbits = 18
+                    ga_sim = Genetic(numparams, popsize, nbits, self.player)
+                    ga_sim.init_pop()
+                    ga_sim.set_fit_fun(monster.mock_fight)
+                    numGenerations = 1000
+                    mutationProb = 0.005
+                    crossoverProb = 0.4
+                    ga_sim.set_sim_parameters(numGenerations, mutationProb, crossoverProb)
+                    for _ in range(ga_sim.num_generations):
+
+                        ga_sim.decode_individuals()
+                        ga_sim.eval_fit()
+                        ga_sim.print_progress()
+                        if ga_sim.can_win():
+                            break
+                        ga_sim.new_gen()
+
+                    new_attr = ga_sim.get_best_individual()
+                    self.player.set_attributes(new_attr)
+                    notComputed = False
+                
                 if monster.fight(self.player):
+                    print("fighting monster")
                     self.maze.monsterList.remove(monster)
                     self.score += 100
                     self.playerAI.recompute_path()
