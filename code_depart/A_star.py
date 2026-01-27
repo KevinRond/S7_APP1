@@ -4,8 +4,11 @@ from Constants import START, EXIT, COIN, TREASURE, OBSTACLE, MONSTER, DOOR
 
 
 # Liste des types d'objets que l'on peut cibler avec A*.
-# Tu peux facilement modifier cette constante (ajouter/enlever un type).
 TARGET_TILES = [EXIT, COIN, TREASURE]
+
+# If True, the EXIT is only targeted when there are no other targets
+# (coins/treasures) left on the map.
+GO_TO_EXIT_LAST = False
 
 # Nombre de cibles les plus proches (en distance de Manhattan) pour
 # lesquelles on calcule un vrai chemin A* avant de choisir la meilleure.
@@ -101,27 +104,29 @@ class A_star:
         """
         targets = self.get_target_positions()
 
-        # Optionnel : retirer certaines cibles (par ex. déjà visitées).
+        # Optional behaviour: only allow EXIT as a target once all other targets are gone.
+        if GO_TO_EXIT_LAST:
+            non_exit_targets = [(i, j) for (i, j) in targets if self.grid[i][j] != EXIT]
+            if non_exit_targets:
+                targets = non_exit_targets
+
         if excluded_targets:
             excluded = set(excluded_targets)
             targets = [t for t in targets if t not in excluded]
         if not targets:
             return []
 
-        # Si la position de départ est déjà sur une tuile cible, le chemin est trivial.
         if start in targets:
             return [start]
 
-        # On trie toutes les cibles par distance de Manhattan depuis la case de départ.
+        # Order targets by Manhattan distance from start
         targets_sorted = sorted(targets, key=lambda t: self.manhattan(start, t))
 
-        # On commence par tester les NEAREST_TARGETS plus proches, comme demandé.
         primary_candidates = targets_sorted[:NEAREST_TARGETS]
         secondary_candidates = targets_sorted[NEAREST_TARGETS:]
 
         best_path = None
 
-        # 1) Essayer les cibles les plus proches en Manhattan.
         for goal in primary_candidates:
             path = self._find_path_to_single_goal(start, goal)
             if path and (best_path is None or len(path) < len(best_path)):
@@ -130,8 +135,8 @@ class A_star:
         if best_path is not None:
             return best_path
 
-        # 2) Si aucune des NEAREST_TARGETS n'est atteignable, on tente les autres
-        #    cibles restantes, toujours triées par distance de Manhattan.
+        # 2) If none of the NEAREST_TARGETS are reachable, try the other
+        #    remaining targets, still sorted by Manhattan distance.
         for goal in secondary_candidates:
             path = self._find_path_to_single_goal(start, goal)
             if path and (best_path is None or len(path) < len(best_path)):
