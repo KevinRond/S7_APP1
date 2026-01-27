@@ -5,7 +5,7 @@ from Player import *
 from Maze import *
 from Constants import *
 from Sys_Expert import Systeme_Expert
-from PlayerAI_SIMPLE import PlayerAI
+from PlayerAI import PlayerAI
 from Genetic import Genetic
 
 
@@ -306,8 +306,10 @@ class App:
                     self.timer += 0.01
             pygame.event.pump()
             keys = pygame.key.get_pressed()
-            # self.on_keyboard_input(keys)
-            instruction = self.playerAI.get_next_instruction()
+            instruction = None
+            instruction = self.on_keyboard_input(keys)
+            if instruction is None:
+                instruction = self.playerAI.get_next_instruction()
             if instruction is not None:
                 self.on_AI_input(instruction)
             if self.on_coin_collision():

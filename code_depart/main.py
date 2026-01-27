@@ -6,7 +6,6 @@ from swiplserver import PrologMQI
 from Games2D import *
 import A_star
 import ctypes
-# import ctypes
 
 if __name__ == '__main__':
     # Niveau 0 - sans obstacle - 'assets/Mazes/mazeMedium_0'

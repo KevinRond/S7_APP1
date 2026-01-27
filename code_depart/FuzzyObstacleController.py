@@ -6,72 +6,70 @@ from Constants import HEIGHT
 
 
 def createFuzzyControllerObstacle():
-    obs_angl = ctrl.Antecedent(np.linspace(-90, 90, 1000), 'angle_obstacle0')
-    mur_angl = ctrl.Antecedent(np.linspace(-90, 90, 1000), 'angle_mur0')
-    obs_dist = ctrl.Antecedent(np.linspace(0, 80, 1000), 'distance_obstacle0')
-    mur_dist = ctrl.Antecedent(np.linspace(0, 80, 1000), 'distance_mur0')
+    obstacle_angle = ctrl.Antecedent(np.linspace(-90, 90, 1000), 'angle_obstacle0')
+    wall_angle = ctrl.Antecedent(np.linspace(-90, 90, 1000), 'angle_mur0')
+    
+    obstacle_distance = ctrl.Antecedent(np.linspace(0, 80, 1000), 'distance_obstacle0')
+    wall_distance = ctrl.Antecedent(np.linspace(0, 80, 1000), 'distance_mur0')
 
-    action = ctrl.Consequent(np.linspace(-90, 90, 1000), 'output1', defuzzify_method='centroid')
+    turn_action = ctrl.Consequent(np.linspace(-90, 90, 1000), 'output1', defuzzify_method='centroid')
+    turn_action.accumulation_method = np.fmax
 
-    action.accumulation_method = np.fmax
+    obstacle_angle['gauche'] = fuzz.trapmf(obstacle_angle.universe, [-71, -40, -25, 0])
+    obstacle_angle['droite'] = fuzz.trapmf(obstacle_angle.universe, [0, 25, 40, 71])
+    obstacle_angle['gauche_completement'] = fuzz.trapmf(obstacle_angle.universe, [-90, -90, -80, -38])
+    obstacle_angle['droite_completement'] = fuzz.trapmf(obstacle_angle.universe, [38, 80, 90, 90])
+    obstacle_angle['centre'] = fuzz.trimf(obstacle_angle.universe, [-32, 0, 32])
 
-    for obj in [obs_angl, mur_angl]:
-        obj['gauche'] = fuzz.trapmf(obj.universe, [-71, -40, -25, 0])
-        obj['droite'] = fuzz.trapmf(obj.universe, [0, 25, 40, 71])
-        obj['gauche_completement'] = fuzz.trapmf(obj.universe, [-90, -90, -80, -38])
-        obj['droite_completement'] = fuzz.trapmf(obj.universe, [38, 80, 90, 90])
-        obj['centre'] = fuzz.trimf(obj.universe, [-32, 0, 32])
+    wall_angle['gauche'] = fuzz.trapmf(wall_angle.universe, [-71, -40, -25, 0])
+    wall_angle['droite'] = fuzz.trapmf(wall_angle.universe, [0, 25, 40, 71])
+    wall_angle['gauche_completement'] = fuzz.trapmf(wall_angle.universe, [-90, -90, -80, -38])
+    wall_angle['droite_completement'] = fuzz.trapmf(wall_angle.universe, [38, 80, 90, 90])
+    wall_angle['centre'] = fuzz.trimf(wall_angle.universe, [-32, 0, 32])
 
-    obs_dist['proche'] = fuzz.trapmf(obs_dist.universe, [0, 0, 10, 20])
-    obs_dist['loin'] = fuzz.trapmf(obs_dist.universe, [15, 25, 80, 80])
+    obstacle_distance['proche'] = fuzz.trapmf(obstacle_distance.universe, [0, 0, 10, 20])
+    obstacle_distance['loin'] = fuzz.trapmf(obstacle_distance.universe, [15, 25, 80, 80])
 
-    mur_dist['proche'] = fuzz.trapmf(mur_dist.universe, [0, 0, 30, 40])
-    mur_dist['loin'] = fuzz.trapmf(mur_dist.universe, [35, 45, 80, 80])
+    wall_distance['proche'] = fuzz.trapmf(wall_distance.universe, [0, 0, 30, 40])
+    wall_distance['loin'] = fuzz.trapmf(wall_distance.universe, [35, 45, 80, 80])
 
-    action['gauche'] = fuzz.trapmf(action.universe, [-90, -90, -60, 0])
-    action['droite'] = fuzz.trapmf(action.universe, [0, 60, 90, 90])
-    action['tout_droit'] = fuzz.trimf(action.universe, [-40, 0, 40])
+    turn_action['gauche'] = fuzz.trapmf(turn_action.universe, [-90, -90, -60, 0])
+    turn_action['droite'] = fuzz.trapmf(turn_action.universe, [0, 60, 90, 90])
+    turn_action['tout_droit'] = fuzz.trimf(turn_action.universe, [-40, 0, 40])
 
     rules = []
 
-    # IMPROVED RULES: Check distance before turning toward a side
     
-    # If obstacle/wall on RIGHT and close, only turn LEFT if we're not also blocked on left
-    # Turn left when right side is blocked and we have room on left
     rules.append(ctrl.Rule(
-        antecedent=((obs_angl['droite'] | obs_angl['centre']) & obs_dist['proche']),
-        consequent=action['gauche']
+        antecedent=((obstacle_angle['droite'] | obstacle_angle['centre']) & obstacle_distance['proche']),
+        consequent=turn_action['gauche']
     ))
     
     rules.append(ctrl.Rule(
-        antecedent=((mur_angl['droite'] | mur_angl['centre']) & mur_dist['proche']),
-        consequent=action['gauche']
+        antecedent=((wall_angle['droite'] | wall_angle['centre']) & wall_distance['proche']),
+        consequent=turn_action['gauche']
     ))
 
-    # If obstacle/wall on LEFT and close, turn RIGHT
     rules.append(ctrl.Rule(
-        antecedent=(obs_angl['gauche'] & obs_dist['proche']),
-        consequent=action['droite']
+        antecedent=(obstacle_angle['gauche'] & obstacle_distance['proche']),
+        consequent=turn_action['droite']
     ))
     
     rules.append(ctrl.Rule(
-        antecedent=(mur_angl['gauche'] & mur_dist['proche']),
-        consequent=action['droite']
+        antecedent=(wall_angle['gauche'] & wall_distance['proche']),
+        consequent=turn_action['droite']
     ))
 
-    # If obstacle is far to the side, go straight
     rules.append(ctrl.Rule(
-        antecedent=((obs_angl['droite_completement'] | obs_angl['gauche_completement']) & obs_dist['loin']),
-        consequent=action['tout_droit']
+        antecedent=((obstacle_angle['droite_completement'] | obstacle_angle['gauche_completement']) & obstacle_distance['loin']),
+        consequent=turn_action['tout_droit']
     ))
 
-    # If wall is far or way to the side, go straight
     rules.append(ctrl.Rule(
-        antecedent=((mur_angl['droite_completement'] | mur_angl['gauche_completement']) | mur_dist['loin']),
-        consequent=action['tout_droit']
+        antecedent=((wall_angle['droite_completement'] | wall_angle['gauche_completement']) | wall_distance['loin']),
+        consequent=turn_action['tout_droit']
     ))
     
-    # Conjunction (and_func) and disjunction (or_func) methods for rules:
     for rule in rules:
         rule.and_func = np.fmin
         rule.or_func = np.fmax
@@ -169,8 +167,6 @@ class LogiqueFlou:
         return variables_finales
 
     def convert_coordinates(self, p1, p2):
-        # changement de système de coordonné
-        # on veut le point (0, 0) en bas à gauche
         p1_x, p1_y = p1
         p2_x, p2_y = p2
 
