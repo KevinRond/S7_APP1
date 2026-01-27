@@ -40,8 +40,6 @@ class PixelAstar:
         perception = self.maze.make_perception_list(self.player, None)
         all_blockers = perception[0] + perception[1]  # walls + obstacles
 
-        # Optionally expand the pixel grid to include full tiles that contain perceived blockers.
-        # This adds extra (known-empty) space in those tiles beyond the perception square.
         expanded_rect = perception_rect
         if self.include_full_blocker_tiles and all_blockers:
             tile_rects = []
@@ -95,9 +93,6 @@ class PixelAstar:
             inflated_rect = blocker.inflate(player_rect.width, player_rect.height)
             
             # Grid cell range that overlaps with inflated_rect
-            # IMPORTANT: pygame.Rect.right / .bottom are EXCLUSIVE bounds.
-            # So we use (right - 1) and (bottom - 1) when mapping to cell indices,
-            # otherwise we block one extra row/col.
             start_col = max(0, pix_to_col(inflated_rect.left))
             end_col = min(grid_width - 1, pix_to_col(inflated_rect.right - 1))
             start_row = max(0, pix_to_row(inflated_rect.top))
@@ -115,14 +110,6 @@ class PixelAstar:
         start_col = pix_to_col(player_center_x)
         start_row = pix_to_row(player_center_y)
         start_pos = (start_row, start_col)
-
-        # If we're touching an inflated blocker, the exact center cell can be blocked.
-        # Don't blindly force it open; instead, snap to the nearest walkable cell.
-        snapped_start = nearest_walkable(start_pos)
-        if snapped_start is None:
-            print("Pixel A*: No walkable start cell in local perception grid")
-            return None
-        start_pos = snapped_start
 
         # Find the next tile to target - should be adjacent to current tile
         # Use center-based tile for consistency with pixel grid.
